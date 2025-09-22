@@ -1,24 +1,44 @@
+from contextlib import asynccontextmanager
 from os import path
+from typing import AsyncGenerator
 
+# Routers
+from api.v1.routers import (
+    bootstrap_router_v1,
+    docker_router_v1,
+    index_router_v1,
+    version_router_v1,
+)
 from commonwealth.utils.apis import GenericErrorHandlingRoute, PrettyJSONResponse
+from commonwealth.utils.zenoh_helper import ZenohSession, apply_route_decorator
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi_versioning import VersionedFastAPI
 
-# Routers
-from api.v1.routers import (
-    index_router_v1,
-    docker_router_v1,
-    version_router_v1,
-    bootstrap_router_v1,
+zenoh_config = ZenohSession(
+    configuration={
+        "mode": "client",
+        "connect/endpoints": ["tcp/127.0.0.1:7447"],
+        "adminspace": {"enabled": True},
+        "metadata": {"name": "version-chooser"},
+    }
 )
 
-application = FastAPI(
+
+@asynccontextmanager
+async def lifespan(fastapi_app: FastAPI) -> AsyncGenerator[None, None]:  # pylint: disable=unused-argument
+    yield
+    zenoh_config.close()
+
+
+original_application = FastAPI(
     title="Version Chooser API",
     description="Version Chooser is the BlueOS service responsible for managing BlueOS versions",
     default_response_class=PrettyJSONResponse,
+    lifespan=lifespan,
 )
+application = apply_route_decorator(original_application)
 application.router.route_class = GenericErrorHandlingRoute
 
 # API v1
@@ -44,4 +64,8 @@ async def root() -> HTMLResponse:
 
 
 # Mount static files
-application.mount("/static", StaticFiles(directory=path.join(path.dirname(__file__), "static")), name="static")
+application.mount(
+    "/static",
+    StaticFiles(directory=path.join(path.dirname(__file__), "static")),
+    name="static",
+)

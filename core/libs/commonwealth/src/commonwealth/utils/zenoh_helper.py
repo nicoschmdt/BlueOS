@@ -1,3 +1,4 @@
+# pylint: skip-file
 import asyncio
 from typing import Any, Callable
 import json
@@ -8,8 +9,8 @@ from loguru import logger
 
 
 class ZenohSession:
-    session: zenoh.Session
-    _executor = None
+    session: zenoh.Session | None
+    _executor: concurrent.futures.ThreadPoolExecutor | None = None
 
     def __init__(self, configuration: dict[str, Any]):
         config = zenoh.Config()
@@ -22,23 +23,23 @@ class ZenohSession:
             thread_name_prefix="zenoh-",
         )
 
-    def close(self):
+    def close(self) -> None:
         if self.session:
-            self.session.close()
+            self.session.close()  # type: ignore[no-untyped-call]
             self.session = None
         if self._executor:
             self._executor.shutdown()
             self._executor = None
 
     @classmethod
-    def zenoh_queryable(cls):
-        def decorator(func: Callable[[], Any]):
+    def zenoh_queryable(cls) -> Callable[[Callable[..., Any]], Callable[[zenoh.Query], None]]:
+        def decorator(func: Callable[..., Any]) -> Callable[[zenoh.Query], None]:
             route_path = getattr(func, "_route_path", None)
             if route_path and route_path[0] == "/":
                 route_path = route_path[1:]
 
-            def wrapper(query: zenoh.Query):
-                async def _handle_async():
+            def wrapper(query: zenoh.Query) -> None:
+                async def _handle_async() -> None:
                     try:
                         response = await func()
                         if response is not None:
@@ -47,8 +48,11 @@ class ZenohSession:
                         error_response = {"error": str(e)}
                         query.reply(query.selector.key_expr, json.dumps(error_response))
 
+                def run_async() -> None:
+                    asyncio.run(_handle_async())
+
                 if ZenohSession._executor:
-                    ZenohSession._executor.submit(asyncio.run, _handle_async())
+                    ZenohSession._executor.submit(run_async)
 
             if route_path and ZenohSession.session:
                 try:
@@ -56,13 +60,15 @@ class ZenohSession:
                 except Exception as e:
                     logger.error(f"Error declaring queryable {route_path}: {e}")
 
+            return wrapper
+
         return decorator
 
 
-def route_info_decorator(deco):
-    def wrapper(path, *args, **kwargs):
-        def inner(func):
-            func._route_path = path
+def route_info_decorator(deco: Callable[..., Any]) -> Callable[..., Any]:
+    def wrapper(path: str, *args: Any, **kwargs: Any) -> Callable[..., Any]:
+        def inner(func: Callable[..., Any]) -> Any:
+            func._route_path = path  # type: ignore[attr-defined]
             return deco(path, *args, **kwargs)(func)
 
         return inner
@@ -70,10 +76,10 @@ def route_info_decorator(deco):
     return wrapper
 
 
-def apply_route_decorator(app: fastapi.FastAPI):
-    app.get = route_info_decorator(app.get)
-    app.post = route_info_decorator(app.post)
-    app.put = route_info_decorator(app.put)
-    app.delete = route_info_decorator(app.delete)
-    app.patch = route_info_decorator(app.patch)
+def apply_route_decorator(app: fastapi.FastAPI) -> fastapi.FastAPI:
+    setattr(app, "get", route_info_decorator(app.get))
+    setattr(app, "post", route_info_decorator(app.post))
+    setattr(app, "put", route_info_decorator(app.put))
+    setattr(app, "delete", route_info_decorator(app.delete))
+    setattr(app, "patch", route_info_decorator(app.patch))
     return app
