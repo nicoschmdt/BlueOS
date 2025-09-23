@@ -1,27 +1,30 @@
 # pylint: skip-file
 import asyncio
-from typing import Any, Callable
+from typing import Any, Callable, List, Tuple
 import json
 import concurrent.futures
 import fastapi
 import zenoh
 from loguru import logger
 
+PENDING_QUERYABLES: List[Tuple[str, Callable[..., Any]]] = []
+
 
 class ZenohSession:
     session: zenoh.Session | None
     _executor: concurrent.futures.ThreadPoolExecutor | None = None
+    _health_check_task: asyncio.Task[None] | None = None
 
-    def __init__(self, configuration: dict[str, Any]):
-        config = zenoh.Config()
-        for key, value in configuration.items():
-            config.insert_json5(key, json.dumps(value))
+    def __init__(self, service_name: str):
+        config = self.zenoh_config(service_name)
 
         ZenohSession.session = zenoh.open(config)
         ZenohSession._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=4,
             thread_name_prefix="zenoh-",
         )
+
+        ZenohSession._health_check_task = asyncio.create_task(self.health_check())
 
     def close(self) -> None:
         if self.session:
@@ -30,12 +33,37 @@ class ZenohSession:
         if self._executor:
             self._executor.shutdown()
             self._executor = None
+        if ZenohSession._health_check_task:
+            ZenohSession._health_check_task.cancel()
+            ZenohSession._health_check_task = None
+
+    async def health_check(self) -> None:
+        while True:
+            await asyncio.sleep(60)
+            if self.session:
+                for pending_queryable, zenoh_wrapper in PENDING_QUERYABLES:
+                    self.session.declare_queryable(pending_queryable, zenoh_wrapper)
+
+    def zenoh_config(self, service_name: str) -> zenoh.Config:
+        configuration = {
+            "mode": "client",
+            "connect/endpoints": ["tcp/127.0.0.1:7447"],
+            "adminspace": {"enabled": True},
+            "metadata": {"name": service_name},
+        }
+
+        config = zenoh.Config()
+        for key, value in configuration.items():
+            config.insert_json5(key, json.dumps(value))
+
+        return config
 
     @classmethod
     def zenoh_queryable(cls) -> Callable[[Callable[..., Any]], Callable[[zenoh.Query], None]]:
         def decorator(func: Callable[..., Any]) -> Callable[[zenoh.Query], None]:
             route_path = getattr(func, "_route_path", None)
             if route_path and route_path[0] == "/":
+                logger.info(f"Route path: {route_path}")
                 route_path = route_path[1:]
 
             def wrapper(query: zenoh.Query) -> None:
@@ -54,15 +82,28 @@ class ZenohSession:
                 if ZenohSession._executor:
                     ZenohSession._executor.submit(run_async)
 
-            if route_path and ZenohSession.session:
-                try:
-                    ZenohSession.session.declare_queryable(route_path, wrapper)
-                except Exception as e:
-                    logger.error(f"Error declaring queryable {route_path}: {e}")
+            if route_path:
+                PENDING_QUERYABLES.append((route_path, wrapper))
+                if ZenohSession.session:
+                    try:
+                        ZenohSession.session.declare_queryable(route_path, wrapper)
+                    except Exception as e:
+                        logger.error(f"Error declaring queryable {route_path}: {e}")
 
             return wrapper
 
         return decorator
+
+    @classmethod
+    def register_pending_queryables(cls) -> None:
+        if not ZenohSession.session:
+            return
+
+        for route_path, zenoh_wrapper in PENDING_QUERYABLES:
+            try:
+                ZenohSession.session.declare_queryable(route_path, zenoh_wrapper)
+            except Exception as e:
+                logger.error(f"Error declaring queryable {route_path}: {e}")
 
 
 def route_info_decorator(deco: Callable[..., Any]) -> Callable[..., Any]:

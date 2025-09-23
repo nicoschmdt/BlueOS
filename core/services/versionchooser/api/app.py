@@ -10,20 +10,14 @@ from api.v1.routers import (
     version_router_v1,
 )
 from commonwealth.utils.apis import GenericErrorHandlingRoute, PrettyJSONResponse
-from commonwealth.utils.zenoh_helper import ZenohSession, apply_route_decorator
+from commonwealth.utils.zenoh_helper import apply_route_decorator
+from commonwealth.utils.zenoh_utils import get_zenoh_session
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi_versioning import VersionedFastAPI
 
-zenoh_config = ZenohSession(
-    configuration={
-        "mode": "client",
-        "connect/endpoints": ["tcp/127.0.0.1:7447"],
-        "adminspace": {"enabled": True},
-        "metadata": {"name": "version-chooser"},
-    }
-)
+zenoh_config = get_zenoh_session("version-chooser")
 
 
 @asynccontextmanager

@@ -9,8 +9,6 @@ from docker_login import (
 from fastapi import APIRouter, status
 from fastapi_versioning import versioned_api_route
 
-from api.app import zenoh_config
-
 docker_router_v1: APIRouter = APIRouter(
     prefix="/docker",
     tags=["docker_v1"],
@@ -19,19 +17,16 @@ docker_router_v1: APIRouter = APIRouter(
 )
 
 
-@zenoh_config.zenoh_queryable()
 @docker_router_v1.post("/login", summary="Login Docker daemon to a registry")
 async def docker_login(request: DockerLoginInfo) -> None:
     return make_docker_login(request)
 
 
-@zenoh_config.zenoh_queryable()
 @docker_router_v1.post("/logout", summary="Logout Docker daemon from a registry")
 async def docker_logout(request: DockerLoginInfo) -> Any:
     return make_docker_logout(request)
 
 
-@zenoh_config.zenoh_queryable()
 @docker_router_v1.get("/accounts", summary="Get the list of accounts logged in")
 def docker_accounts() -> Any:
     return get_docker_accounts()

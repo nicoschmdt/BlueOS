@@ -1,12 +1,13 @@
 from typing import Any, AsyncGenerator
 
 import aiodocker
+from commonwealth.utils.zenoh_utils import get_zenoh_session
 from fastapi import APIRouter, Depends, File, UploadFile, status
 from fastapi_versioning import versioned_api_route
 from pydantic import BaseModel
 from utils.chooser import VersionChooser
 
-from api.app import zenoh_config
+zenoh_config = get_zenoh_session("version-chooser")
 
 version_router_v1: APIRouter = APIRouter(
     prefix="/version",
