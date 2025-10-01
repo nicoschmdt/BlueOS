@@ -8,22 +8,22 @@ from api.v1.routers import (
     docker_router_v1,
     index_router_v1,
     version_router_v1,
+    zenoh_version_router,
 )
 from commonwealth.utils.apis import GenericErrorHandlingRoute, PrettyJSONResponse
-from commonwealth.utils.zenoh_helper import apply_route_decorator
-from commonwealth.utils.zenoh_utils import get_zenoh_session
+from zenoh_helper_access import ZenohSession, apply_route_decorator
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi_versioning import VersionedFastAPI
 
-zenoh_config = get_zenoh_session("version-chooser")
+zenoh_session = ZenohSession("version-chooser")
 
 
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI) -> AsyncGenerator[None, None]:  # pylint: disable=unused-argument
     yield
-    zenoh_config.close()
+    zenoh_session.close()
 
 
 original_application = FastAPI(
@@ -43,6 +43,10 @@ application.include_router(bootstrap_router_v1)
 
 
 application = VersionedFastAPI(application, prefix_format="/v{major}.{minor}", enable_latest=True)
+
+
+# Zenoh routers
+zenoh_session.include_router(zenoh_version_router)
 
 
 @application.get("/", status_code=200)

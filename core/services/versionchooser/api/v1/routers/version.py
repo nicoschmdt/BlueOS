@@ -1,13 +1,13 @@
 from typing import Any, AsyncGenerator
 
 import aiodocker
-from commonwealth.utils.zenoh_utils import get_zenoh_session
+from zenoh_helper_access import ZenohRouter
 from fastapi import APIRouter, Depends, File, UploadFile, status
 from fastapi_versioning import versioned_api_route
 from pydantic import BaseModel
 from utils.chooser import VersionChooser
 
-zenoh_config = get_zenoh_session("version-chooser")
+zenoh_version_router = ZenohRouter()
 
 version_router_v1: APIRouter = APIRouter(
     prefix="/version",
@@ -27,7 +27,7 @@ async def get_docker_client() -> AsyncGenerator[VersionChooser, None]:
         yield VersionChooser(docker_client)
 
 
-@zenoh_config.zenoh_queryable()
+@zenoh_version_router.queryable()
 @version_router_v1.get(
     "/current",
     summary="Return the current running version of BlueOS",
@@ -39,7 +39,7 @@ async def get_version(
     return await version_chooser.get_version()
 
 
-@zenoh_config.zenoh_queryable()
+@zenoh_version_router.queryable()
 @version_router_v1.post("/current", summary="Sets the current version of BlueOS to a new tag")
 async def set_version(
     request: DockerImageIdentifier,
@@ -48,7 +48,7 @@ async def set_version(
     return await version_chooser.set_version(request.repository, request.tag)
 
 
-@zenoh_config.zenoh_queryable()
+@zenoh_version_router.queryable()
 @version_router_v1.post("/pull", summary="Pulls a version from dockerhub")
 async def pull_version(
     request: DockerImageIdentifier,
@@ -57,7 +57,7 @@ async def pull_version(
     return await version_chooser.pull_version(request.repository, request.tag)
 
 
-@zenoh_config.zenoh_queryable()
+@zenoh_version_router.queryable()
 @version_router_v1.delete("/delete", summary="Delete the selected version of BlueOS")
 async def delete_version(
     request: DockerImageIdentifier,
@@ -66,7 +66,7 @@ async def delete_version(
     return await version_chooser.delete_version(request.repository, request.tag)
 
 
-@zenoh_config.zenoh_queryable()
+@zenoh_version_router.queryable()
 @version_router_v1.get("/available/local", summary="Returns available local versions")
 async def get_available_local_versions(
     version_chooser: VersionChooser = Depends(get_docker_client),
@@ -74,7 +74,7 @@ async def get_available_local_versions(
     return await version_chooser.get_available_local_versions()
 
 
-@zenoh_config.zenoh_queryable()
+@zenoh_version_router.queryable()
 @version_router_v1.get(
     "/available/{repository}/{image}",
     summary="Returns available versions, both locally and in dockerhub",
@@ -87,7 +87,7 @@ async def get_available_versions(
     return await version_chooser.get_available_versions(f"{repository}/{image}")
 
 
-@zenoh_config.zenoh_queryable()
+@zenoh_version_router.queryable()
 @version_router_v1.post("/load", summary="Load a docker tar file")
 async def load(
     file: UploadFile = File(...),
@@ -97,7 +97,7 @@ async def load(
     return await version_chooser.load(data)
 
 
-@zenoh_config.zenoh_queryable()
+@zenoh_version_router.queryable()
 @version_router_v1.post("/restart", summary="Restart the currently running docker container")
 async def restart(version_chooser: VersionChooser = Depends(get_docker_client)) -> Any:
     return await version_chooser.restart()

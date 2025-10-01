@@ -2,17 +2,14 @@
 import asyncio
 import logging
 
-from api import application
+from api import application, zenoh_session
 from args import CommandLineArgs
-from commonwealth.utils.zenoh_utils import create_zenoh_session
 from commonwealth.utils.logs import InterceptHandler, init_logger
 from commonwealth.utils.sentry_config import init_sentry_async
 from loguru import logger
 from uvicorn import Config, Server
 
 SERVICE_NAME = "version-chooser"
-
-zenoh_config = create_zenoh_session(SERVICE_NAME)
 
 logging.basicConfig(handlers=[InterceptHandler()], level=0)
 init_logger(SERVICE_NAME)
@@ -29,7 +26,7 @@ async def main() -> None:
     if args.debug:
         logging.getLogger(SERVICE_NAME).setLevel(logging.DEBUG)
 
-    zenoh_config.register_pending_queryables()
+    zenoh_session.start()
 
     config = Config(app=application, host=args.host, port=args.port)
     server = Server(config)
