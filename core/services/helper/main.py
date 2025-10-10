@@ -20,6 +20,7 @@ from uuid import UUID
 
 import psutil
 from bs4 import BeautifulSoup
+from commonwealth.mavlink_comm.MavlinkComm import MavlinkMessenger
 from commonwealth.utils.apis import GenericErrorHandlingRoute, PrettyJSONResponse
 from commonwealth.utils.decorators import temporary_cache
 from commonwealth.utils.general import (
@@ -231,6 +232,8 @@ class Helper:
 
     MAX_ATTEMPTS_LEFT = 3
     attempts_left: Dict[int, int] = {}
+
+    mavlink2rest = MavlinkMessenger()
 
     @staticmethod
     # pylint: disable=too-many-arguments,too-many-branches,too-many-locals
@@ -536,6 +539,23 @@ class Helper:
             logging.info(f"file updated: {filename}")
         return True
 
+    def statustext_message(text: str) -> Dict[str, Any]:
+        char = [c for c in text]
+        return {
+            "type":"STATUSTEXT",
+            "severity": {
+                "type": "MAV_SEVERITY_NOTICE"
+            },
+            "text":char,
+            "id": 0,
+            "chunk_seq": 0
+        }
+
+    @staticmethod
+    async def check_factory_mode() -> None:
+        mav_message = Helper.statustext_message("BlueOS is in factory mode")
+        await Helper.mavlink2rest.send_mavlink_message(mav_message)
+
 
 fast_api_app = FastAPI(
     title="Helper API",
@@ -668,6 +688,7 @@ async def ping(host: str, interface_addr: Optional[str] = None) -> bool:
 
 
 async def periodic() -> None:
+    await Helper.check_factory_mode()
     while True:
         await asyncio.sleep(60)
         Helper.check_internet_access()
