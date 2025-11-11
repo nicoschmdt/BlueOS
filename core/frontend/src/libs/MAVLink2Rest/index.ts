@@ -24,7 +24,7 @@ class Mavlink2RestManager {
   private static instance: Mavlink2RestManager
 
   private constructor() {
-    this.baseUrl = `${Mavlink2RestManager.getWebsocketPrefix()}://${window.location.host}/mavlink2rest/ws/mavlink`
+    this.baseUrl = `${Mavlink2RestManager.getWebsocketPrefix()}://${window.location.host}/mavlink-server/rest/ws`
     this.baseUrlCandidates = [
       this.baseUrl,
     ]
@@ -189,7 +189,7 @@ class Mavlink2RestManager {
    */
   sendMessage(message: any): void {
     // TODO: Abstract that and use websocket to do the post and deal with the answer somehow
-    axios.post(`${this.baseUrl}/mavlink`.replace('/ws/mavlink', '').replace('ws', 'http'), message)
+    axios.post(`${this.baseUrl}/mavlink`.replace('/ws', '').replace('ws', 'http'), message)
       .catch((error) => console.log(`unable to send message ${message}: ${error}`))
   }
 

@@ -22,7 +22,7 @@ class MavlinkMessenger:
         self.system_id = int(os.environ.get("MAV_SYSTEM_ID", 1))
         self.component_id = int(os.environ.get("MAV_COMPONENT_ID_ONBOARD_COMPUTER4", 194))
         self.sequence = 0
-        self.m2r_address = "localhost:6040"
+        self.m2r_address = "localhost:8080"
 
     def set_system_id(self, system_id: int) -> None:
         logger.info(f"system_id set to: {system_id}")
@@ -41,7 +41,7 @@ class MavlinkMessenger:
 
     @property
     def m2r_rest_url(self) -> str:
-        return f"http://{self.m2r_address}/mavlink"
+        return f"http://{self.m2r_address}/rest/mavlink"
 
     async def get_all_mavlink(self) -> Any:
         request_timeout = 1.0
@@ -72,7 +72,7 @@ class MavlinkMessenger:
                     if await response.text() == "None":
                         self.set_system_id(await self.get_most_recent_vehicle_id())
                         raise MavlinkMessageReceiveFail("Received empty response")
-                    message = await response.json()
+                    message = await response.json(content_type="text/plain")
             except asyncio.exceptions.TimeoutError as error:
                 raise MavlinkMessageReceiveFail(f"Request timed out after {request_timeout} second.") from error
 

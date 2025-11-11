@@ -187,6 +187,11 @@ export default defineConfig(({ command, mode }) => {
           changeOrigin: true,
           ws: true,
         },
+        '^/mavlink-server': {
+          target: SERVER_ADDRESS,
+          changeOrigin: true,
+          ws: true,
+        },
         '^/mavlink-camera-manager': {
           target: SERVER_ADDRESS,
         },
