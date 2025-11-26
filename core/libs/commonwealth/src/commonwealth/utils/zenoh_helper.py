@@ -1,6 +1,6 @@
 # pylint: skip-file
 import asyncio
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, List, Tuple
 import json
 import concurrent.futures
 import fastapi
@@ -10,26 +10,27 @@ from loguru import logger
 
 class ZenohSession:
     session: zenoh.Session | None
+    config: zenoh.Config
     _executor: concurrent.futures.ThreadPoolExecutor | None = None
 
-    def __init__(self):
-        ZenohSession.zenoh_config()
-        ZenohSession.session = zenoh.open(ZenohSession.config)
+    def __init__(self) -> None:
+        self.zenoh_config()
+        self.session = zenoh.open(self.config)
 
-        ZenohSession._executor = concurrent.futures.ThreadPoolExecutor(
+        self._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=4,
             thread_name_prefix="zenoh-",
         )
 
     def close(self) -> None:
-        if ZenohSession.session:
-            ZenohSession.session.close()  # type: ignore[no-untyped-call]
-            ZenohSession.session = None
-        if ZenohSession._executor:
-            ZenohSession._executor.shutdown()
-            ZenohSession._executor = None
+        if self.session:
+            self.session.close()  # type: ignore[no-untyped-call]
+            self.session = None
+        if self._executor:
+            self._executor.shutdown()
+            self._executor = None
 
-    def zenoh_config() -> None:
+    def zenoh_config(self) -> None:
         configuration = {
             "mode": "client",
             "connect/endpoints": ["tcp/127.0.0.1:7447"],
@@ -41,7 +42,7 @@ class ZenohSession:
         for key, value in configuration.items():
             config.insert_json5(key, json.dumps(value))
 
-        ZenohSession.config = config
+        self.config = config
 
 
 zenoh_session = ZenohSession()
@@ -49,7 +50,7 @@ zenoh_session = ZenohSession()
 
 class ZenohRouter:
     prefix: str
-    routes: Tuple[str, Callable[..., Any]] = []
+    routes: List[Tuple[str, Callable[..., Any]]] = []
 
     def __init__(self, prefix: str):
         self.prefix = prefix
@@ -76,7 +77,7 @@ class ZenohRouter:
                 if zenoh_session._executor:
                     zenoh_session._executor.submit(run_async)
 
-            self.routes.append((route_path, wrapper))
+            self.routes.append((route_path, wrapper))  # type: ignore[arg-type]
             return wrapper
 
         return decorator
@@ -85,7 +86,7 @@ class ZenohRouter:
         for path, func in self.routes:
             full_path = f"{self.prefix}/{path}"
             logger.error(f"Declaring queryable: {full_path}")
-            zenoh_session.session.declare_queryable(full_path, func)
+            zenoh_session.session.declare_queryable(full_path, func)  # type: ignore[union-attr]
 
 
 def route_info_decorator(deco: Callable[..., Any]) -> Callable[..., Any]:
