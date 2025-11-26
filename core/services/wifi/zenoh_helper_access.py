@@ -1,6 +1,6 @@
 # pylint: skip-file
 import asyncio
-from typing import Any, Callable
+from typing import Any, Callable, Tuple
 import json
 import concurrent.futures
 import fastapi
@@ -12,8 +12,8 @@ class ZenohSession:
     session: zenoh.Session | None
     _executor: concurrent.futures.ThreadPoolExecutor | None = None
 
-    def __init__(self, service_name: str):
-        ZenohSession.zenoh_config(service_name)
+    def __init__(self):
+        ZenohSession.zenoh_config()
         ZenohSession.session = zenoh.open(ZenohSession.config)
 
         ZenohSession._executor = concurrent.futures.ThreadPoolExecutor(
@@ -29,12 +29,12 @@ class ZenohSession:
             ZenohSession._executor.shutdown()
             ZenohSession._executor = None
 
-    def zenoh_config(service_name: str) -> None:
+    def zenoh_config() -> None:
         configuration = {
             "mode": "client",
             "connect/endpoints": ["tcp/127.0.0.1:7447"],
             "adminspace": {"enabled": True},
-            "metadata": {"name": service_name},
+            "metadata": {"name": "zenoh-queryables"},
         }
 
         config = zenoh.Config()
@@ -43,11 +43,20 @@ class ZenohSession:
 
         ZenohSession.config = config
 
-    @classmethod
-    def queryable(cls) -> Callable[[Callable[..., Any]], Callable[[zenoh.Query], None]]:
+
+zenoh_session = ZenohSession()
+
+
+class ZenohRouter:
+    prefix: str
+    routes: Tuple[str, Callable[..., Any]] = []
+
+    def __init__(self, prefix: str):
+        self.prefix = prefix
+
+    def queryable(self) -> Callable[[Callable[..., Any]], Callable[[zenoh.Query], None]]:
         def decorator(func: Callable[..., Any]) -> Callable[[zenoh.Query], None]:
             route_path = getattr(func, "_route_path", None)
-            logger.info(f"Route path: {route_path}") # assim funciona mas tem que definir o endpoint sem o inicio do serviço
             if route_path and route_path[0] == "/":
                 route_path = route_path[1:]
 
@@ -64,18 +73,19 @@ class ZenohSession:
                 def run_async() -> None:
                     asyncio.run(_handle_async())
 
-                if ZenohSession._executor:
-                    ZenohSession._executor.submit(run_async)
+                if zenoh_session._executor:
+                    zenoh_session._executor.submit(run_async)
 
-            if route_path and ZenohSession.session:
-                try:
-                    ZenohSession.session.declare_queryable(route_path, wrapper)
-                except Exception as e:
-                    logger.error(f"Error declaring queryable {route_path}: {e}")
-
+            self.routes.append((route_path, wrapper))
             return wrapper
 
         return decorator
+
+    def declare(self) -> None:
+        for path, func in self.routes:
+            full_path = f"{self.prefix}/{path}"
+            logger.error(f"Declaring queryable: {full_path}")
+            zenoh_session.session.declare_queryable(full_path, func)
 
 
 def route_info_decorator(deco: Callable[..., Any]) -> Callable[..., Any]:

@@ -14,7 +14,7 @@ from commonwealth.utils.apis import (
 )
 from commonwealth.utils.logs import InterceptHandler, init_logger
 from commonwealth.utils.sentry_config import init_sentry_async
-from zenoh_helper_access import ZenohSession, apply_route_decorator
+from zenoh_helper_access import ZenohRouter, apply_route_decorator, zenoh_session
 from fastapi import FastAPI, HTTPException, status
 from fastapi.staticfiles import StaticFiles
 from fastapi_versioning import VersionedFastAPI, version
@@ -36,7 +36,7 @@ from wifi_handlers.wpa_supplicant.WifiManager import WifiManager
 FRONTEND_FOLDER = Path.joinpath(Path(__file__).parent.absolute(), "frontend")
 SERVICE_NAME = "wifi-manager"
 
-zenoh_session = ZenohSession(SERVICE_NAME)
+zenoh_manager = ZenohRouter(SERVICE_NAME)
 
 logging.basicConfig(handlers=[InterceptHandler()], level=0)
 init_logger(SERVICE_NAME)
@@ -63,7 +63,7 @@ app = apply_route_decorator(original_app)
 app.router.route_class = GenericErrorHandlingRoute
 
 
-@zenoh_session.queryable()
+@zenoh_manager.queryable()
 @app.get("/status", summary="Retrieve status of wifi manager.")
 @version(1, 0)
 async def network_status() -> Any:
@@ -74,7 +74,7 @@ async def network_status() -> Any:
     return wifi_status
 
 
-@zenoh_session.queryable()
+@zenoh_manager.queryable()
 @app.get("/scan", response_model=List[ScannedWifiNetwork], summary="Retrieve available wifi networks.")
 @version(1, 0)
 async def scan() -> Any:
@@ -86,7 +86,7 @@ async def scan() -> Any:
         raise StackedHTTPException(status_code=status.HTTP_425_TOO_EARLY, error=error) from error
 
 
-@zenoh_session.queryable()
+@zenoh_manager.queryable()
 @app.get("/saved", response_model=List[SavedWifiNetwork], summary="Retrieve saved wifi networks.")
 @version(1, 0)
 async def saved() -> Any:
@@ -95,7 +95,6 @@ async def saved() -> Any:
     return saved_networks
 
 
-@zenoh_session.queryable()
 @app.post("/connect", summary="Connect to wifi network.")
 @version(1, 0)
 async def connect(credentials: WifiCredentials, hidden: bool = False) -> Any:
@@ -103,7 +102,6 @@ async def connect(credentials: WifiCredentials, hidden: bool = False) -> Any:
     await wifi_manager.try_connect_to_network(credentials, hidden)
 
 
-@zenoh_session.queryable()
 @app.post("/remove", summary="Remove saved wifi network.")
 @version(1, 0)
 async def remove(ssid: str) -> Any:
@@ -117,7 +115,7 @@ async def remove(ssid: str) -> Any:
     logger.info(f"Successfully removed '{ssid}'.")
 
 
-@zenoh_session.queryable()
+@zenoh_manager.queryable()
 @app.get("/disconnect", summary="Disconnect from wifi network.")
 @version(1, 0)
 async def disconnect() -> Any:
@@ -126,7 +124,7 @@ async def disconnect() -> Any:
     logger.info("Successfully disconnected from network.")
 
 
-@zenoh_session.queryable()
+@zenoh_manager.queryable()
 @app.get("/hotspot", summary="Get hotspot state.")
 @version(1, 0)
 async def hotspot_state() -> Any:
@@ -134,7 +132,7 @@ async def hotspot_state() -> Any:
     return await wifi_manager.hotspot_is_running()
 
 
-@zenoh_session.queryable()
+@zenoh_manager.queryable()
 @app.get("/hotspot_extended_status", summary="Get extended hotspot status.")
 @version(1, 0)
 async def hotspot_extended_state() -> HotspotStatus:
@@ -144,7 +142,6 @@ async def hotspot_extended_state() -> HotspotStatus:
     )
 
 
-@zenoh_session.queryable()
 @app.post("/hotspot", summary="Enable/disable hotspot.")
 @version(1, 0)
 async def toggle_hotspot(enable: bool) -> Any:
@@ -154,7 +151,6 @@ async def toggle_hotspot(enable: bool) -> Any:
     return await wifi_manager.disable_hotspot()
 
 
-@zenoh_session.queryable()
 @app.post("/smart_hotspot", summary="Enable/disable smart-hotspot.")
 @version(1, 0)
 def toggle_smart_hotspot(enable: bool) -> Any:
@@ -165,7 +161,7 @@ def toggle_smart_hotspot(enable: bool) -> Any:
     wifi_manager.disable_smart_hotspot()
 
 
-@zenoh_session.queryable()
+@zenoh_manager.queryable()
 @app.get("/smart_hotspot", summary="Check if smart-hotspot is enabled.")
 @version(1, 0)
 def check_smart_hotspot() -> Any:
@@ -173,7 +169,6 @@ def check_smart_hotspot() -> Any:
     return wifi_manager.is_smart_hotspot_enabled()
 
 
-@zenoh_session.queryable()
 @app.post("/hotspot_credentials", summary="Update hotspot credentials.")
 @version(1, 0)
 async def set_hotspot_credentials(credentials: WifiCredentials) -> Any:
@@ -181,7 +176,7 @@ async def set_hotspot_credentials(credentials: WifiCredentials) -> Any:
     await wifi_manager.set_hotspot_credentials(credentials)
 
 
-@zenoh_session.queryable()
+@zenoh_manager.queryable()
 @app.get("/hotspot_credentials", summary="Get hotspot credentials.")
 @version(1, 0)
 def get_hotspot_credentials() -> Any:
@@ -206,12 +201,11 @@ async def main() -> None:
     for implementation in candidates:
         implementation.configure(parser.parse_args())
 
-    # zenoh
-    zenoh_session.start()
-
     # Running uvicorn with log disabled so loguru can handle it
     config = Config(app=app, host="0.0.0.0", port=9000, log_config=None)
     server = Server(config)
+
+    zenoh_manager.declare()  # maybe move this to after app.mount?
 
     # pylint: disable=global-statement
     global wifi_manager
