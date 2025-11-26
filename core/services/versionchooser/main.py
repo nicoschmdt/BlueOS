@@ -2,7 +2,7 @@
 import asyncio
 import logging
 
-from api import application, zenoh_session
+from api import application
 from args import CommandLineArgs
 from commonwealth.utils.logs import InterceptHandler, init_logger
 from commonwealth.utils.sentry_config import init_sentry_async
@@ -25,8 +25,6 @@ async def main() -> None:
     args = CommandLineArgs.from_args()
     if args.debug:
         logging.getLogger(SERVICE_NAME).setLevel(logging.DEBUG)
-
-    zenoh_session.start()
 
     config = Config(app=application, host=args.host, port=args.port)
     server = Server(config)
