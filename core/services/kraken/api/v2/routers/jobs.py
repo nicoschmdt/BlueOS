@@ -4,6 +4,7 @@ from typing import Any, Callable, List, Tuple
 
 from fastapi import APIRouter, Body, HTTPException, status
 from fastapi_versioning import versioned_api_route
+from zenoh_helper_access import ZenohRouter
 
 from jobs import JobsManager
 from jobs.exceptions import JobNotFound
@@ -15,6 +16,8 @@ jobs_router_v2 = APIRouter(
     route_class=versioned_api_route(2, 0),
     responses={status.HTTP_404_NOT_FOUND: {"description": "Not found"}},
 )
+
+zenoh_jobs_router = ZenohRouter("jobs")
 
 
 def jobs_to_http_exception(endpoint: Callable[..., Any]) -> Callable[..., Any]:
@@ -40,12 +43,14 @@ async def create(
     return job
 
 
+@zenoh_jobs_router.queryable()
 @jobs_router_v2.get("/", status_code=status.HTTP_200_OK)
 @jobs_to_http_exception
 async def fetch() -> List[Job]:
     return JobsManager.get()
 
 
+@zenoh_jobs_router.queryable()
 @jobs_router_v2.get("/{identifier}", status_code=status.HTTP_200_OK)
 @jobs_to_http_exception
 async def fetch_by_identifier(identifier: str) -> Job:

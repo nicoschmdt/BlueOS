@@ -1,6 +1,7 @@
 from os import path
 
 from commonwealth.utils.apis import GenericErrorHandlingRoute
+from zenoh_helper_access import ZenohRouter
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +15,10 @@ from api.v2.routers import (
     index_router_v2,
     jobs_router_v2,
     manifest_router_v2,
+    zenoh_container_router,
+    zenoh_extension_router,
+    zenoh_jobs_router,
+    zenoh_manifest_router,
 )
 
 application = FastAPI(
@@ -34,6 +39,15 @@ application.include_router(jobs_router_v2)
 application.include_router(manifest_router_v2)
 
 application = VersionedFastAPI(application, prefix_format="/v{major}.{minor}", enable_latest=True)
+
+# Zenoh
+zenoh_router = ZenohRouter("kraken")
+zenoh_router.include_router(zenoh_container_router)
+zenoh_router.include_router(zenoh_extension_router)
+zenoh_router.include_router(zenoh_jobs_router)
+zenoh_router.include_router(zenoh_manifest_router)
+
+zenoh_router.declare()
 
 
 @application.get("/", status_code=200)

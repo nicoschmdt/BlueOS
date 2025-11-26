@@ -3,6 +3,7 @@ from functools import wraps
 from typing import Any, Callable, List, Tuple, cast
 
 from commonwealth.utils.streaming import streamer
+from zenoh_helper_access import ZenohRouter
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import Response, StreamingResponse
 from fastapi_versioning import versioned_api_route
@@ -21,6 +22,8 @@ extension_router_v2 = APIRouter(
     route_class=versioned_api_route(2, 0),
     responses={status.HTTP_404_NOT_FOUND: {"description": "Not found"}},
 )
+
+zenoh_extension_router = ZenohRouter("extension")
 
 
 def extension_to_http_exception(endpoint: Callable[..., Any]) -> Callable[..., Any]:
@@ -42,6 +45,7 @@ def extension_to_http_exception(endpoint: Callable[..., Any]) -> Callable[..., A
     return wrapper
 
 
+@zenoh_extension_router.queryable()
 @extension_router_v2.get("/", status_code=status.HTTP_200_OK)
 @extension_to_http_exception
 async def fetch() -> list[ExtensionSource]:
@@ -52,6 +56,7 @@ async def fetch() -> list[ExtensionSource]:
     return [ext.source for ext in extensions]
 
 
+@zenoh_extension_router.queryable()
 @extension_router_v2.get("/{identifier}/details", status_code=status.HTTP_200_OK)
 @extension_to_http_exception
 async def fetch_by_identifier(identifier: str) -> list[ExtensionSource]:
@@ -62,6 +67,7 @@ async def fetch_by_identifier(identifier: str) -> list[ExtensionSource]:
     return [ext.source for ext in extensions]
 
 
+@zenoh_extension_router.queryable()
 @extension_router_v2.get("/{identifier}/{tag}/details", status_code=status.HTTP_200_OK)
 @extension_to_http_exception
 async def fetch_by_identifier_and_tag(identifier: str, tag: str) -> ExtensionSource:
