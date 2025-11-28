@@ -3,7 +3,7 @@ from functools import wraps
 from typing import Any, Callable, List, Tuple, cast
 
 from commonwealth.utils.streaming import streamer
-from zenoh_helper_access import ZenohRouter
+from zenoh_helper_access import ZenohRouter, apply_route_decorator_router
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import Response, StreamingResponse
 from fastapi_versioning import versioned_api_route
@@ -16,12 +16,13 @@ from extension.exceptions import (
 from extension.extension import Extension
 from extension.models import ExtensionSource
 
-extension_router_v2 = APIRouter(
+original_extension_router_v2 = APIRouter(
     prefix="/extension",
     tags=["extension_v2"],
     route_class=versioned_api_route(2, 0),
     responses={status.HTTP_404_NOT_FOUND: {"description": "Not found"}},
 )
+extension_router_v2 = apply_route_decorator_router(original_extension_router_v2)
 
 zenoh_extension_router = ZenohRouter("extension")
 

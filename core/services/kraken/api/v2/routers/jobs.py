@@ -4,18 +4,19 @@ from typing import Any, Callable, List, Tuple
 
 from fastapi import APIRouter, Body, HTTPException, status
 from fastapi_versioning import versioned_api_route
-from zenoh_helper_access import ZenohRouter
+from zenoh_helper_access import ZenohRouter, apply_route_decorator_router
 
 from jobs import JobsManager
 from jobs.exceptions import JobNotFound
 from jobs.models import Job, JobMethod
 
-jobs_router_v2 = APIRouter(
+original_jobs_router_v2 = APIRouter(
     prefix="/jobs",
     tags=["jobs_v2"],
     route_class=versioned_api_route(2, 0),
     responses={status.HTTP_404_NOT_FOUND: {"description": "Not found"}},
 )
+jobs_router_v2 = apply_route_decorator_router(original_jobs_router_v2)
 
 zenoh_jobs_router = ZenohRouter("jobs")
 

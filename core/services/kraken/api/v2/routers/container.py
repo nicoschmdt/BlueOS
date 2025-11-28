@@ -2,7 +2,7 @@ from functools import wraps
 from typing import Any, Callable, Optional, Tuple
 
 from commonwealth.utils.streaming import streamer, timeout_streamer
-from zenoh_helper_access import ZenohRouter
+from zenoh_helper_access import ZenohRouter, apply_route_decorator_router
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from fastapi_versioning import versioned_api_route
@@ -11,12 +11,13 @@ from harbor import ContainerManager
 from harbor.exceptions import ContainerNotFound
 from harbor.models import ContainerModel, ContainerUsageModel
 
-container_router_v2 = APIRouter(
+original_container_router_v2 = APIRouter(
     prefix="/container",
     tags=["container_v2"],
     route_class=versioned_api_route(2, 0),
     responses={status.HTTP_404_NOT_FOUND: {"description": "Not found"}},
 )
+container_router_v2 = apply_route_decorator_router(original_container_router_v2)
 
 zenoh_container_router = ZenohRouter("container")
 
