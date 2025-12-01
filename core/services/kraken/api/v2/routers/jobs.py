@@ -4,7 +4,7 @@ from typing import Any, Callable, List, Tuple
 
 from fastapi import APIRouter, Body, HTTPException, status
 from fastapi_versioning import versioned_api_route
-from zenoh_helper_access import ZenohRouter, apply_route_decorator_router
+from commonwealth.utils.zenoh_helper import ZenohRouter, apply_route_decorator_router
 
 from jobs import JobsManager
 from jobs.exceptions import JobNotFound

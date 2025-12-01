@@ -14,7 +14,7 @@ from commonwealth.utils.apis import (
 )
 from commonwealth.utils.logs import InterceptHandler, init_logger
 from commonwealth.utils.sentry_config import init_sentry_async
-from zenoh_helper_access import ZenohRouter, apply_route_decorator, zenoh_session
+from commonwealth.utils.zenoh_helper import ZenohRouter, apply_route_decorator, zenoh_session
 from fastapi import FastAPI, HTTPException, status
 from fastapi.staticfiles import StaticFiles
 from fastapi_versioning import VersionedFastAPI, version
@@ -50,7 +50,7 @@ wifi_manager: Optional[AbstractWifiManager] = None
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI) -> AsyncGenerator[None, None]:  # pylint: disable=unused-argument
     yield
-    zenoh_session.close()  # ver se tá conseguindo fechar // se não tá sobrando nenhuma thread
+    zenoh_session.close()
 
 
 original_app = FastAPI(

@@ -103,15 +103,12 @@ class ZenohRouter:
             zenoh_session.session.declare_queryable(full_path, func)
 
     def include_router(self, router: "ZenohRouter") -> None:
-        logger.error(f"prefix: {router.prefix}")
         to_be_added = set()
-        logger.error(len(router.routes))
         for path, func in router.routes:
 
             full_path = router.prefix
             if path:
                 full_path += f"/{path}"
-            logger.error(f"path: {full_path}")
 
             to_be_added.add((full_path, func))
         self.routes = list(set(self.routes) | to_be_added)

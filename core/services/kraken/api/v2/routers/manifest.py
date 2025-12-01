@@ -3,7 +3,7 @@ from typing import Any, Callable, Tuple
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi_versioning import versioned_api_route
-from zenoh_helper_access import ZenohRouter, apply_route_decorator_router
+from commonwealth.utils.zenoh_helper import ZenohRouter, apply_route_decorator_router
 
 from manifest import ManifestManager
 from manifest.exceptions import (
