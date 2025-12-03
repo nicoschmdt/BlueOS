@@ -129,7 +129,6 @@ def sanitize_route_path(path: str) -> str:
     zenoh_path = re.sub(PARAM_REGEX, "*", path)
     zenoh_path = zenoh_path.replace("*/*", "**")
 
-    logger.error(f"Sanitized path: {path} -> {zenoh_path}")
     return zenoh_path
 
 

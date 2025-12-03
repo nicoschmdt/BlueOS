@@ -1,11 +1,14 @@
 # pylint: skip-file
 import asyncio
+import re
 from typing import Any, Callable, List, Tuple
 import json
 import concurrent.futures
 import fastapi
 import zenoh
 from loguru import logger
+
+PARAM_REGEX = r"{[a-zA-Z0-9_]+}"
 
 
 class ZenohSession:
@@ -51,19 +54,20 @@ zenoh_session = ZenohSession()
 class ZenohRouter:
     prefix: str
     routes: List[Tuple[str, Callable[..., Any]]]
+    queryables: List[zenoh.Queryable[Any]]
 
     def __init__(self, prefix: str):
         self.prefix = prefix
         self.routes = []
+        self.queryables = []
 
     def queryable(self) -> Callable[[Callable[..., Any]], Callable[[zenoh.Query], None]]:
         def decorator(func: Callable[..., Any]) -> Callable[[zenoh.Query], None]:
             route_path = getattr(func, "_route_path", None)
-            if route_path and route_path[0] == "/":
-                route_path = route_path[1:]
-
-            if route_path and route_path[-1] == "/":
-                route_path = route_path[:-1]
+            if route_path is not None:
+                zenoh_path = sanitize_route_path(route_path)
+            else:
+                zenoh_path = ""
 
             def wrapper(query: zenoh.Query) -> None:
                 async def _handle_async() -> None:
@@ -81,8 +85,7 @@ class ZenohRouter:
                 if zenoh_session._executor:
                     zenoh_session._executor.submit(run_async)
 
-            if route_path is not None:
-                self.routes.append((route_path, wrapper))  # type: ignore[arg-type]
+            self.routes.append((zenoh_path, wrapper))  # type: ignore[arg-type]
             return wrapper
 
         return decorator
@@ -100,7 +103,8 @@ class ZenohRouter:
                 full_path += f"/{path}"
 
             logger.error(f"Declaring queryable: {full_path}")
-            zenoh_session.session.declare_queryable(full_path, func)
+            queryable = zenoh_session.session.declare_queryable(full_path, func)
+            self.queryables.append(queryable)
 
     def include_router(self, router: "ZenohRouter") -> None:
         to_be_added = set()
@@ -112,6 +116,20 @@ class ZenohRouter:
 
             to_be_added.add((full_path, func))
         self.routes = list(set(self.routes) | to_be_added)
+
+
+def sanitize_route_path(path: str) -> str:
+    if path and path[0] == "/":
+        path = path[1:]
+    if path and path[-1] == "/":
+        path = path[:-1]
+
+    obligatory_params = re.findall(PARAM_REGEX, path)
+    params = [params[1:-1] for params in obligatory_params]
+    zenoh_path = re.sub(PARAM_REGEX, "*", path)
+    zenoh_path = zenoh_path.replace("*/*", "**")
+
+    return zenoh_path
 
 
 def route_info_decorator(deco: Callable[..., Any]) -> Callable[..., Any]:

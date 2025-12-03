@@ -2,7 +2,7 @@ from functools import wraps
 from typing import Any, Callable, Optional, Tuple
 
 from commonwealth.utils.streaming import streamer, timeout_streamer
-from commonwealth.utils.zenoh_helper import ZenohRouter, apply_route_decorator_router
+from zenoh_helper_access import ZenohRouter, apply_route_decorator_router
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from fastapi_versioning import versioned_api_route
