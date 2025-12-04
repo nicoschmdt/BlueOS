@@ -70,9 +70,11 @@ class ZenohRouter:
                 zenoh_path = ""
 
             def wrapper(query: zenoh.Query) -> None:
+                params = {key: value for key, value in query.parameters}  # type: ignore
+
                 async def _handle_async() -> None:
                     try:
-                        response = await func()
+                        response = await func(**params)
                         if response is not None:
                             query.reply(query.selector.key_expr, json.dumps(response, default=str))
                     except Exception as e:
@@ -124,8 +126,9 @@ def sanitize_route_path(path: str) -> str:
     if path and path[-1] == "/":
         path = path[:-1]
 
-    obligatory_params = re.findall(PARAM_REGEX, path)
-    params = [params[1:-1] for params in obligatory_params]
+    # needed if we want to get parameters from the path used
+    # obligatory_params = re.findall(PARAM_REGEX, path)
+    # params = [params[1:-1] for params in obligatory_params]
     zenoh_path = re.sub(PARAM_REGEX, "*", path)
     zenoh_path = zenoh_path.replace("*/*", "**")
 

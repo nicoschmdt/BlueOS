@@ -70,9 +70,11 @@ class ZenohRouter:
                 zenoh_path = ""
 
             def wrapper(query: zenoh.Query) -> None:
+                params = {key: value for key, value in query.parameters}  # type: ignore
+
                 async def _handle_async() -> None:
                     try:
-                        response = await func()
+                        response = await func(**params)
                         if response is not None:
                             query.reply(query.selector.key_expr, json.dumps(response, default=str))
                     except Exception as e:
