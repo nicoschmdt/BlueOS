@@ -3,7 +3,7 @@ from os import path
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from commonwealth.utils.apis import GenericErrorHandlingRoute
-from zenoh_helper_access import ZenohRouter, zenoh_session
+from commonwealth.utils.zenoh_helper import ZenohRouter, zenoh_session
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
