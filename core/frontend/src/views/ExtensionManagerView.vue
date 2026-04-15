@@ -904,7 +904,7 @@ export default Vue.extend({
       }
     },
     async fetchInstalledExtensions(): Promise<void> {
-      kraken.getInstalledExtensions()
+      kraken.fetchInstalledExtensions()
         .then((response) => {
           this.installed_extensions = {}
           for (const extension of response) {
@@ -935,9 +935,16 @@ export default Vue.extend({
       this.show_pull_output = true
       const tracker = this.getTracker()
 
-      kraken.installExtension(
-        extension,
-        (progressEvent) => this.handleDownloadProgress(progressEvent.event, tracker),
+      kraken.installExtensionZenoh(
+        extension.identifier,
+        (fragment: string) => {
+          tracker.digestStreamFragment(fragment)
+          this.pull_output = tracker.pull_output
+          this.download_percentage = tracker.download_percentage
+          this.extraction_percentage = tracker.extraction_percentage
+          this.status_text = tracker.overall_status
+        },
+        extension.tag,
       )
         .then(() => {
           this.fetchInstalledExtensions()
@@ -986,7 +993,7 @@ export default Vue.extend({
     },
     async uninstall(extension: InstalledExtensionData) {
       this.setLoading(extension, true)
-      kraken.uninstallExtension(extension.identifier)
+      kraken.uninstallExtensionZenoh(extension.identifier)
         .then(() => {
           this.fetchInstalledExtensions()
           notifier.pushSuccess('EXTENSION_UNINSTALL_SUCCESS', `${extension.name} uninstalled successfully.`, true)
@@ -1015,7 +1022,7 @@ export default Vue.extend({
       this.running_containers = this.running_containers.filter(
         (container) => container.name !== this.getContainerName(extension),
       )
-      kraken.disableExtension(extension.identifier)
+      kraken.disableExtensionZenoh(extension.identifier)
         .catch((error) => {
           notifier.pushBackError('EXTENSION_DISABLE_FAIL', error)
         })
@@ -1026,7 +1033,7 @@ export default Vue.extend({
     },
     async enableAndStart(extension: InstalledExtensionData) {
       this.setLoading(extension, true)
-      kraken.enableExtension(extension.identifier, extension.tag)
+      kraken.enableExtensionZenoh(extension.identifier, extension.tag)
         .catch((error) => {
           notifier.pushBackError('EXTENSION_ENABLE_FAIL', error)
         })
@@ -1039,7 +1046,7 @@ export default Vue.extend({
     },
     async restart(extension: InstalledExtensionData) {
       this.setLoading(extension, true)
-      kraken.restartExtension(extension.identifier)
+      kraken.restartExtensionZenoh(extension.identifier)
         .catch((error) => {
           notifier.pushBackError('EXTENSION_RESTART_FAIL', error)
         })

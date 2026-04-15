@@ -215,51 +215,38 @@ export async function installExtension(
 }
 
 /**
- * Enable an extension by its identifier and tag, uses API v2
+ * Enable an extension by its identifier and tag, uses zenoh
  * @param {string} identifier The identifier of the extension
  * @param {string} tag The tag of the extension
  */
-export async function enableExtension(identifier: string, tag: string): Promise<void> {
-  await back_axios({
-    method: 'POST',
-    url: `${KRAKEN_API_V2_URL}/extension/${identifier}/${tag}/enable`,
-    timeout: 10000,
-  })
+export async function enableExtensionZenoh(identifier: string, tag: string): Promise<any | null> {
+  return await zenoh.query(`kraken/extension/enable?identifier=${identifier};tag=${tag}`, QueryTarget.BestMatching)
 }
 
 /**
- * Disable an extension by its identifier, uses API v2
+ * Disable an extension by its identifier, uses zenoh
  * @param {string} identifier The identifier of the extension
  */
-export async function disableExtension(identifier: string): Promise<void> {
-  await back_axios({
-    method: 'POST',
-    url: `${KRAKEN_API_V2_URL}/extension/${identifier}/disable`,
-    timeout: 10000,
-  })
+export async function disableExtensionZenoh(identifier: string): Promise<any | null> {
+  return await zenoh.query(`kraken/extension/disable?identifier=${identifier}`, QueryTarget.BestMatching)
 }
 
 /**
- * Uninstall an extension by its identifier, uses API v2
+ * Uninstall an extension by its identifier, uses zenoh
  * @param {string} identifier The identifier of the extension
  */
-export async function uninstallExtension(identifier: string): Promise<void> {
-  await back_axios({
-    method: 'DELETE',
-    url: `${KRAKEN_API_V2_URL}/extension/${identifier}`,
-  })
+export async function uninstallExtensionZenoh(identifier: string, tag?: string): Promise<any | null> {
+  let queryKey = `kraken/extension/uninstall?identifier=${identifier}`
+  if (tag) queryKey += `;tag=${tag}`
+  return await zenoh.query(queryKey, QueryTarget.BestMatching)
 }
 
 /**
- * Restart an extension by its identifier, uses API v2
+ * Restart an extension by its identifier, uses zenoh
  * @param {string} identifier The identifier of the extension
  */
-export async function restartExtension(identifier: string): Promise<void> {
-  await back_axios({
-    method: 'POST',
-    url: `${KRAKEN_API_V2_URL}/extension/${identifier}/restart`,
-    timeout: 10000,
-  })
+export async function restartExtensionZenoh(identifier: string): Promise<any | null> {
+  return await zenoh.query(`kraken/extension/restart?identifier=${identifier}`, QueryTarget.BestMatching)
 }
 
 /**
@@ -279,19 +266,6 @@ export async function updateExtensionToVersion(
     timeout: 120000,
     onDownloadProgress: progressHandler,
   })
-}
-
-/**
- * List all installed extensions from kraken, uses API v2
- */
-export async function getInstalledExtensions(): Promise<InstalledExtensionData[]> {
-  const response = await back_axios({
-    method: 'GET',
-    url: `${KRAKEN_API_V2_URL}/extension/`,
-    timeout: 30000,
-  })
-
-  return response.data as InstalledExtensionData[]
 }
 
 /**
@@ -412,6 +386,57 @@ export async function createExtensionLogsSubscriber(
   return await zenoh.subscriber(topic, subscriberHandler)
 }
 
+const INSTALL_PROGRESS_TOPIC = 'kraken/extension/install/progress'
+
+export async function installExtensionZenoh(
+  identifier: string,
+  progressHandler?: (fragment: string) => void,
+  tag?: string,
+  stable = true,
+  timeout = 600000,
+): Promise<any | null> {
+  return new Promise(async (resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup()
+      reject(new Error(`Install timed out after ${timeout}ms`))
+    }, timeout)
+
+    let subscriber: Subscriber | null = null
+
+    const cleanup = async () => {
+      clearTimeout(timer)
+      await subscriber?.undeclare()
+    }
+
+    subscriber = await zenoh.subscriber(INSTALL_PROGRESS_TOPIC, async (sample: Sample) => {
+      const raw = sample.payload().to_string()
+      try {
+        const data = JSON.parse(raw)
+        if (data.identifier !== identifier) return
+
+        if (data.status === 'complete') {
+          await cleanup()
+          resolve({ status: 'success' })
+          return
+        }
+
+        progressHandler?.(raw)
+      } catch { /* ignore parse errors */ }
+    })
+
+    let queryKey = `kraken/extension/install?identifier=${identifier}`
+    if (tag) queryKey += `;tag=${tag}`
+    if (!stable) queryKey += `;stable=false`
+
+    const queryResult = await zenoh.query(queryKey, QueryTarget.BestMatching, 30000)
+    if (!queryResult || queryResult.error) {
+      await cleanup()
+      reject(new Error(queryResult?.error ?? 'Install query failed'))
+    }
+  })
+}
+
+
 export default {
   fetchManifestSources,
   fetchManifestSource,
@@ -426,11 +451,10 @@ export default {
   setManifestSourceOrder,
   updateExtensionToVersion,
   installExtension,
-  getInstalledExtensions,
-  enableExtension,
-  disableExtension,
-  uninstallExtension,
-  restartExtension,
+  enableExtensionZenoh,
+  disableExtensionZenoh,
+  uninstallExtensionZenoh,
+  restartExtensionZenoh,
   listContainers,
   getContainersStats,
   uploadExtensionTarFile,
@@ -438,4 +462,5 @@ export default {
   finalizeExtension,
   getHistoricalLogsForExtension,
   createExtensionLogsSubscriber,
+  installExtensionZenoh,
 }

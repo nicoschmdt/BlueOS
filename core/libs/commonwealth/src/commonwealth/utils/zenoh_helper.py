@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable
+from typing import Any, AsyncGenerator, Callable, Optional
 
 import fastapi
 import zenoh
@@ -99,6 +99,24 @@ class ZenohRouter:
 
         if self.zenoh_session.session:
             self.zenoh_session.session.declare_queryable(full_path, wrapper)
+
+    def publish_from_generator(
+        self, topic: str, generator: AsyncGenerator[str, None], on_complete: Optional[str] = None
+    ) -> None:
+        async def _run() -> None:
+            session = self.zenoh_session.session
+            if session is None:
+                async for _ in generator:
+                    pass
+                return
+
+            with session.declare_publisher(topic) as publisher:
+                async for chunk in generator:
+                    publisher.put(chunk)
+                if on_complete:
+                    publisher.put(on_complete)
+
+        self.zenoh_session.submit_to_executor(lambda: asyncio.run(_run()))
 
     def add_routes_to_zenoh(self, app: fastapi.FastAPI) -> None:
         queryables = []
