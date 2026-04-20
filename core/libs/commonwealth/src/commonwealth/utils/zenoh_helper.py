@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, AsyncGenerator, Callable, Optional
+from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
 
 import fastapi
 import zenoh
@@ -117,6 +117,27 @@ class ZenohRouter:
                     publisher.put(on_complete)
 
         self.zenoh_session.submit_to_executor(lambda: asyncio.run(_run()))
+
+    async def publish_periodically(self, topic: str, producer: Callable[[], Awaitable[Any]], period: float) -> None:
+        """
+        Periodically invoke `producer` and publish its JSON-serialized result on `topic`.
+
+        Intended to be awaited from a long-lived coroutine (typically gathered with other
+        publishers on a dedicated worker thread).
+        """
+        session = self.zenoh_session.session
+        if session is None:
+            logger.warning(f"Zenoh session unavailable, skipping periodic publisher for {topic}")
+            return
+
+        with session.declare_publisher(topic) as publisher:
+            while True:
+                try:
+                    payload = await producer()
+                    publisher.put(json.dumps(payload, default=str))
+                except Exception:
+                    logger.exception(f"Error publishing periodic topic {topic}")
+                await asyncio.sleep(period)
 
     def add_routes_to_zenoh(self, app: fastapi.FastAPI) -> None:
         queryables = []

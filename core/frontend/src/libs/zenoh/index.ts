@@ -1,4 +1,6 @@
-import { Config, QueryTarget, Receiver, RecvErr, Sample, Session, Subscriber } from '@eclipse-zenoh/zenoh-ts'
+import {
+  Config, QueryTarget, Receiver, RecvErr, Sample, Session, Subscriber,
+} from '@eclipse-zenoh/zenoh-ts'
 
 class ZenohManager {
   private static instance: ZenohManager
@@ -31,7 +33,7 @@ class ZenohManager {
     return this.sessionPromise
   }
 
-  public async query(key: string, target: QueryTarget, timeout: number = 30000) : Promise<any | null> {
+  public async query(key: string, target: QueryTarget, timeout = 30000) : Promise<any | null> {
     const session = await this.getSession()
     if (!session) {
       console.error('Zenoh session not initialized')

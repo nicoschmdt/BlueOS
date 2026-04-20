@@ -378,7 +378,6 @@
 </template>
 
 <script lang="ts">
-import { Session } from '@eclipse-zenoh/zenoh-ts'
 import Vue from 'vue'
 
 import NotSafeOverlay from '@/components/common/NotSafeOverlay.vue'
@@ -394,7 +393,6 @@ import ExtensionSettingsModal from '@/components/kraken/modals/ExtensionSettings
 import PullProgress from '@/components/utils/PullProgress.vue'
 import Notifier from '@/libs/notifier'
 import settings from '@/libs/settings'
-import zenoh from '@/libs/zenoh'
 import { OneMoreTime } from '@/one-more-time'
 import { Dictionary } from '@/types/common'
 import { kraken_service } from '@/types/frontend_services'
@@ -491,9 +489,6 @@ export default Vue.extend({
       metrics: {} as Dictionary<{ cpu: number, memory: number}>,
       metrics_interval: 0,
       edited_extension: null as null | InstalledExtensionData & { editing: boolean },
-      fetch_installed_ext_task: new OneMoreTime({ delay: 10000, disposeWith: this }),
-      fetch_running_containers_task: new OneMoreTime({ delay: 10000, disposeWith: this }),
-      fetch_containers_stats_task: new OneMoreTime({ delay: 25000, disposeWith: this }),
       fab_menu: false,
       upload_temp_tag: null as null | string,
       upload_metadata: null as null | ExtensionUploadMetadata,
@@ -509,7 +504,6 @@ export default Vue.extend({
       install_from_file_last_level: -1,
       active_operation_identifier: localStorage.getItem(ACTIVE_OPERATION_KEY) as null | string,
       active_operation_type: (localStorage.getItem(ACTIVE_OPERATION_TYPE_KEY) ?? null) as null | 'install' | 'update',
-      session: null as Session | null,
     }
   },
   computed: {
@@ -612,29 +606,32 @@ export default Vue.extend({
       }
     },
   },
-  async mounted() {
+  mounted() {
     this.fetchManifest()
-    this.fetch_installed_ext_task.setAction(this.fetchInstalledExtensions)
-    this.fetch_running_containers_task.setAction(this.fetchRunningContainers)
-    this.fetch_containers_stats_task.setAction(this.fetchContainersStats)
-    await this.initializeZenohSession()
+    this.fetchInstalledExtensions()
+    this.fetchRunningContainers()
+    this.stats_poller = new OneMoreTime(
+      { delay: 25000, disposeWith: this },
+      () => this.fetchContainersStats(),
+    )
   },
   destroyed() {
     clearInterval(this.metrics_interval)
     this.stopUploadKeepAlive()
-    this.session = null
   },
   methods: {
-    async initializeZenohSession() {
-      if (this.session) {
-        return
+    applyInstalledExtensions(extensions: InstalledExtensionData[]): void {
+      const map: Dictionary<InstalledExtensionData> = {}
+      for (const extension of extensions) {
+        map[extension.identifier] = extension
       }
-
-      try {
-        this.session = await zenoh.getSession()
-      } catch (error) {
-        console.error('[ExtensionManagerView] Failed to open Zenoh session:', error)
-      }
+      this.installed_extensions = map
+      this.dockers_fetch_failed = false
+      this.dockers_fetch_done = true
+    },
+    applyRunningContainers(containers: RunningContainer[]): void {
+      this.running_containers = containers
+      this.clearStaleInstallingState()
     },
     clearEditedExtension() {
       this.edited_extension = null
@@ -796,10 +793,17 @@ export default Vue.extend({
       this.setInstallingState(extension.identifier, 'update')
       this.show_pull_output = true
       const tracker = this.getTracker()
-      kraken.updateExtensionToVersion(
+
+      kraken.installExtensionZenoh(
         extension.identifier,
+        (fragment: string) => {
+          tracker.digestStreamFragment(fragment)
+          this.pull_output = tracker.pull_output
+          this.download_percentage = tracker.download_percentage
+          this.extraction_percentage = tracker.extraction_percentage
+          this.status_text = tracker.overall_status
+        },
         version,
-        (progressEvent) => this.handleDownloadProgress(progressEvent.event, tracker),
       )
         .then(() => {
           this.fetchInstalledExtensions()
@@ -862,11 +866,9 @@ export default Vue.extend({
       )
     },
     async fetchRunningContainers(): Promise<void> {
-      try {
-        this.running_containers = await kraken.listContainers()
-        this.clearStaleInstallingState()
-      } catch (error) {
-        notifier.pushBackError('RUNNING_CONTAINERS_FETCH_FAIL', error)
+      const containers = await kraken.listContainersZenoh()
+      if (containers) {
+        this.applyRunningContainers(containers)
       }
     },
     clearStaleInstallingState(): void {
@@ -883,13 +885,10 @@ export default Vue.extend({
       }
     },
     async fetchContainersStats(): Promise<void> {
-      kraken.getContainersStats()
-        .then((response) => {
-          this.metrics = response
-        })
-        .catch((error) => {
-          notifier.pushBackError('EXTENSIONS_METRICS_FETCH_FAIL', error)
-        })
+      const stats = await kraken.getContainersStatsZenoh()
+      if (stats) {
+        this.metrics = stats
+      }
     },
     getContainerName(extension: InstalledExtensionData): string | null {
       return this.getContainer(extension)?.name ?? null
@@ -904,21 +903,13 @@ export default Vue.extend({
       }
     },
     async fetchInstalledExtensions(): Promise<void> {
-      kraken.fetchInstalledExtensions()
-        .then((response) => {
-          this.installed_extensions = {}
-          for (const extension of response) {
-            this.installed_extensions[extension.identifier] = extension
-          }
-          this.dockers_fetch_failed = false
-        })
-        .catch((error) => {
-          notifier.pushBackError('EXTENSIONS_INSTALLED_FETCH_FAIL', error)
-          this.dockers_fetch_failed = true
-        })
-        .finally(() => {
-          this.dockers_fetch_done = true
-        })
+      const extensions = await kraken.fetchInstalledExtensionsZenoh()
+      if (extensions) {
+        this.applyInstalledExtensions(extensions)
+      } else {
+        this.dockers_fetch_failed = true
+        this.dockers_fetch_done = true
+      }
     },
     showLogs(extension: InstalledExtensionData) {
       this.selected_log_extension_identifier = extension.identifier

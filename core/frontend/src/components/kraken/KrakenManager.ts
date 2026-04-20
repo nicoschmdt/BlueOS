@@ -1,3 +1,5 @@
+import { QueryTarget, Sample, Subscriber } from '@eclipse-zenoh/zenoh-ts'
+
 import zenoh from '@/libs/zenoh'
 import {
   ExtensionData,
@@ -9,7 +11,6 @@ import {
   UploadProgressEvent,
 } from '@/types/kraken'
 import back_axios from '@/utils/api'
-import { QueryTarget, Sample, Subscriber } from '@eclipse-zenoh/zenoh-ts'
 
 const KRAKEN_BASE_URL = '/kraken'
 const KRAKEN_API_V2_URL = `${KRAKEN_BASE_URL}/v2.0`
@@ -295,6 +296,27 @@ export async function getContainersStats(): Promise<any> {
 }
 
 /**
+ * One-shot snapshot of installed extensions via zenoh queryable.
+ */
+export async function fetchInstalledExtensionsZenoh(): Promise<InstalledExtensionData[] | null> {
+  return zenoh.query('kraken/extension', QueryTarget.BestMatching)
+}
+
+/**
+ * One-shot snapshot of running containers via zenoh queryable.
+ */
+export async function listContainersZenoh(): Promise<RunningContainer[] | null> {
+  return zenoh.query('kraken/container/list', QueryTarget.BestMatching)
+}
+
+/**
+ * One-shot snapshot of container stats via zenoh queryable.
+ */
+export async function getContainersStatsZenoh(): Promise<any | null> {
+  return zenoh.query('kraken/container/stats', QueryTarget.BestMatching)
+}
+
+/**
  * Upload a tar file containing a Docker image and extract metadata
  * @param {File} file The tar file to upload
  * @returns {Promise<{temp_tag: string, metadata: any, image_name: string}>}
@@ -369,7 +391,7 @@ export async function finalizeExtension(
  * @returns {Promise<any | null>}
  */
 export async function getHistoricalLogsForExtension(identifier: string, timeout: number): Promise<any | null> {
-  const queryKey = `kraken/extension/logs/request?extension_name=${identifier}`
+  const queryKey = `kraken/container/logs/request?extension_name=${identifier}`
   return await zenoh.query(queryKey, QueryTarget.BestMatching, timeout)
 }
 
@@ -426,7 +448,7 @@ export async function installExtensionZenoh(
 
     let queryKey = `kraken/extension/install?identifier=${identifier}`
     if (tag) queryKey += `;tag=${tag}`
-    if (!stable) queryKey += `;stable=false`
+    if (!stable) queryKey += ';stable=false'
 
     const queryResult = await zenoh.query(queryKey, QueryTarget.BestMatching, 30000)
     if (!queryResult || queryResult.error) {
@@ -436,12 +458,11 @@ export async function installExtensionZenoh(
   })
 }
 
-
 export default {
   fetchManifestSources,
   fetchManifestSource,
   fetchConsolidatedManifests,
-  fetchInstalledExtensions,
+  fetchInstalledExtensionsZenoh,
   addManifestSource,
   updateManifestSource,
   deleteManifestSource,
@@ -449,18 +470,16 @@ export default {
   disabledManifestSource,
   setManifestSourcesOrders,
   setManifestSourceOrder,
-  updateExtensionToVersion,
-  installExtension,
+  installExtensionZenoh,
   enableExtensionZenoh,
   disableExtensionZenoh,
   uninstallExtensionZenoh,
   restartExtensionZenoh,
-  listContainers,
-  getContainersStats,
+  listContainersZenoh,
+  getContainersStatsZenoh,
   uploadExtensionTarFile,
   keepTemporaryExtensionAlive,
   finalizeExtension,
   getHistoricalLogsForExtension,
   createExtensionLogsSubscriber,
-  installExtensionZenoh,
 }
