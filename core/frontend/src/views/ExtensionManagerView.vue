@@ -504,6 +504,9 @@ export default Vue.extend({
       install_from_file_last_level: -1,
       active_operation_identifier: localStorage.getItem(ACTIVE_OPERATION_KEY) as null | string,
       active_operation_type: (localStorage.getItem(ACTIVE_OPERATION_TYPE_KEY) ?? null) as null | 'install' | 'update',
+      installed_ext_poller: null as null | OneMoreTime,
+      running_containers_poller: null as null | OneMoreTime,
+      stats_poller: null as null | OneMoreTime,
     }
   },
   computed: {
@@ -608,8 +611,14 @@ export default Vue.extend({
   },
   mounted() {
     this.fetchManifest()
-    this.fetchInstalledExtensions()
-    this.fetchRunningContainers()
+    this.installed_ext_poller = new OneMoreTime(
+      { delay: 10000, disposeWith: this },
+      () => this.fetchInstalledExtensions(),
+    )
+    this.running_containers_poller = new OneMoreTime(
+      { delay: 10000, disposeWith: this },
+      () => this.fetchRunningContainers(),
+    )
     this.stats_poller = new OneMoreTime(
       { delay: 25000, disposeWith: this },
       () => this.fetchContainersStats(),
@@ -621,8 +630,14 @@ export default Vue.extend({
   },
   methods: {
     applyInstalledExtensions(extensions: InstalledExtensionData[]): void {
+      if (!Array.isArray(extensions)) {
+        this.dockers_fetch_failed = true
+        this.dockers_fetch_done = true
+        return
+      }
       const map: Dictionary<InstalledExtensionData> = {}
       for (const extension of extensions) {
+        if (!extension?.identifier) continue
         map[extension.identifier] = extension
       }
       this.installed_extensions = map
@@ -630,6 +645,7 @@ export default Vue.extend({
       this.dockers_fetch_done = true
     },
     applyRunningContainers(containers: RunningContainer[]): void {
+      if (!Array.isArray(containers)) return
       this.running_containers = containers
       this.clearStaleInstallingState()
     },
@@ -886,7 +902,7 @@ export default Vue.extend({
     },
     async fetchContainersStats(): Promise<void> {
       const stats = await kraken.getContainersStatsZenoh()
-      if (stats) {
+      if (stats && typeof stats === 'object' && !stats.error) {
         this.metrics = stats
       }
     },

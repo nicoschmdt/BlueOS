@@ -1,8 +1,9 @@
 import asyncio
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor
-from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
+import threading
+from concurrent.futures import Future
+from typing import Any, AsyncGenerator, Callable, Coroutine, Optional
 
 import fastapi
 import zenoh
@@ -17,7 +18,9 @@ PARAM_REGEX = r"{[a-zA-Z0-9_]+}"
 class ZenohSession(metaclass=Singleton):
     session: zenoh.Session | None = None
     config: zenoh.Config
-    _executor: ThreadPoolExecutor | None = None
+    _loop: asyncio.AbstractEventLoop | None = None
+    _loop_thread: threading.Thread | None = None
+    _loop_ready: threading.Event
 
     def __init__(self, service_name: str) -> None:
         if self.session is not None:
@@ -26,27 +29,73 @@ class ZenohSession(metaclass=Singleton):
         self.zenoh_config(service_name)
         self.session = zenoh.open(self.config)
 
-        self._executor = ThreadPoolExecutor(
-            max_workers=4,
-            thread_name_prefix="zenoh-",
+        self._loop_ready = threading.Event()
+        self._loop_thread = threading.Thread(
+            target=self._run_loop,
+            name="zenoh-loop",
+            daemon=True,
         )
+        self._loop_thread.start()
+        self._loop_ready.wait()
 
-    def submit_to_executor(self, func: Callable[..., Any]) -> None:
-        if self._executor is None:
-            logger.warning("Zenoh session executor is not available, task will not be initialized.")
-            return
+    def _run_loop(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._loop = loop
+        self._loop_ready.set()
         try:
-            self._executor.submit(func)
-        except Exception as e:
-            logger.error(f"Error submitting task to zenoh session executor: {e}")
+            loop.run_forever()
+        finally:
+            try:
+                # Cancel anything still pending so close() can return promptly.
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            finally:
+                loop.close()
+
+    def submit_coroutine(self, coroutine: Coroutine[Any, Any, Any]) -> Optional["Future[Any]"]:
+        """
+        Schedule `coroutine` on the shared Zenoh event loop from any thread (including Zenoh's
+        own callback threads). Returns a concurrent `Future` for callers that care about
+        completion/errors; otherwise we log exceptions so fire-and-forget work isn't silent.
+        """
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            logger.warning("Zenoh session loop is not available, task will not be scheduled.")
+            coroutine.close()
+            return None
+        try:
+            future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+        except RuntimeError as e:
+            # Loop was closed between the is_running() check and submission (shutdown race).
+            logger.warning(f"Could not schedule coroutine on Zenoh loop: {e}")
+            coroutine.close()
+            return None
+
+        def _log_if_failed(fut: "Future[Any]") -> None:
+            if fut.cancelled():
+                return
+            exc = fut.exception()
+            if exc is not None:
+                logger.opt(exception=exc).error("Unhandled error in Zenoh background task")
+
+        future.add_done_callback(_log_if_failed)
+        return future
 
     def close(self) -> None:
         if self.session:
             self.session.close()  # type: ignore[no-untyped-call]
             self.session = None
-        if self._executor:
-            self._executor.shutdown(wait=False, cancel_futures=True)
-            self._executor = None
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+        if self._loop_thread is not None:
+            self._loop_thread.join(timeout=2.0)
+            self._loop_thread = None
+        self._loop = None
 
     def zenoh_config(self, service_name: str) -> None:
         configuration = {
@@ -78,24 +127,26 @@ class ZenohRouter:
 
         def wrapper(query: zenoh.Query) -> None:
             params = dict(query.parameters)  # type: ignore
+            key_expr = query.selector.key_expr
 
-            async def _handle_async() -> None:
-                try:
-                    response = await func(**params)
-                    if response is not None:
-                        query.reply(query.selector.key_expr, json.dumps(response, default=str))
-                except Exception as e:
-                    logger.exception(f"Error in zenoh query handler: {query.selector.key_expr}")
-                    error_response = {
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                    }
-                    query.reply(query.selector.key_expr, json.dumps(error_response))
+            async def _handle_async(q: zenoh.Query) -> None:
+                with q:
+                    try:
+                        response = await func(**params)
+                        if response is not None:
+                            q.reply(key_expr, json.dumps(response, default=str))
+                    except Exception as e:
+                        logger.exception(f"Error in zenoh query handler: {key_expr}")
+                        error_response = {
+                            "error": str(e),
+                            "error_type": type(e).__name__,
+                        }
+                        try:
+                            q.reply(key_expr, json.dumps(error_response))
+                        except Exception:
+                            logger.exception(f"Failed to send error reply for {key_expr}")
 
-            def run_async() -> None:
-                asyncio.run(_handle_async())
-
-            self.zenoh_session.submit_to_executor(run_async)
+            self.zenoh_session.submit_coroutine(_handle_async(query))
 
         if self.zenoh_session.session:
             self.zenoh_session.session.declare_queryable(full_path, wrapper)
@@ -116,28 +167,7 @@ class ZenohRouter:
                 if on_complete:
                     publisher.put(on_complete)
 
-        self.zenoh_session.submit_to_executor(lambda: asyncio.run(_run()))
-
-    async def publish_periodically(self, topic: str, producer: Callable[[], Awaitable[Any]], period: float) -> None:
-        """
-        Periodically invoke `producer` and publish its JSON-serialized result on `topic`.
-
-        Intended to be awaited from a long-lived coroutine (typically gathered with other
-        publishers on a dedicated worker thread).
-        """
-        session = self.zenoh_session.session
-        if session is None:
-            logger.warning(f"Zenoh session unavailable, skipping periodic publisher for {topic}")
-            return
-
-        with session.declare_publisher(topic) as publisher:
-            while True:
-                try:
-                    payload = await producer()
-                    publisher.put(json.dumps(payload, default=str))
-                except Exception:
-                    logger.exception(f"Error publishing periodic topic {topic}")
-                await asyncio.sleep(period)
+        self.zenoh_session.submit_coroutine(_run())
 
     def add_routes_to_zenoh(self, app: fastapi.FastAPI) -> None:
         queryables = []
