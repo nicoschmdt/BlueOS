@@ -68,5 +68,5 @@ class ContainerHandlers:
 
     def register_queryables(self) -> None:
         self.router.add_queryable("container/logs/request", self.logs_request_handler)
-        self.router.add_queryable("container/list", self.list_containers_handler)
+        self.router.add_queryable("container/fetch", self.list_containers_handler)
         self.router.add_queryable("container/stats", self.container_stats_handler)

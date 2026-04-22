@@ -16,4 +16,4 @@ class ManifestHandlers:
         return await manifest_manager.fetch(data, enabled)
 
     def register_queryables(self) -> None:
-        self.router.add_queryable("manifest", self.fetch_handler)
+        self.router.add_queryable("manifest/fetch", self.fetch_handler)

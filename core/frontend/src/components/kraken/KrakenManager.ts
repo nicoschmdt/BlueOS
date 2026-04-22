@@ -299,14 +299,14 @@ export async function getContainersStats(): Promise<any> {
  * One-shot snapshot of installed extensions via zenoh queryable.
  */
 export async function fetchInstalledExtensionsZenoh(): Promise<InstalledExtensionData[] | null> {
-  return zenoh.query('kraken/extension', QueryTarget.BestMatching)
+  return zenoh.query('kraken/extension/fetch', QueryTarget.BestMatching)
 }
 
 /**
  * One-shot snapshot of running containers via zenoh queryable.
  */
 export async function listContainersZenoh(): Promise<RunningContainer[] | null> {
-  return zenoh.query('kraken/container/list', QueryTarget.BestMatching)
+  return zenoh.query('kraken/container/fetch', QueryTarget.BestMatching)
 }
 
 /**

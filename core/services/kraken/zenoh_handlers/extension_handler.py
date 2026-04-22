@@ -80,7 +80,7 @@ class ExtensionHandlers:
         return [ext.source.dict() for ext in extensions if ext.source.identifier != ""]
 
     def register_queryables(self) -> None:
-        self.router.add_queryable("extension", self.fetch_handler)
+        self.router.add_queryable("extension/fetch", self.fetch_handler)
         self.router.add_queryable("extension/install", self.install_handler)
         self.router.add_queryable("extension/uninstall", self.uninstall_handler)
         self.router.add_queryable("extension/enable", self.enable_handler)
