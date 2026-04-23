@@ -738,7 +738,7 @@ export default Vue.extend({
       if (!this.upload_temp_tag) {
         return
       }
-      kraken.keepTemporaryExtensionAlive(this.upload_temp_tag).catch((error) => {
+      kraken.keepTemporaryExtensionAliveZenoh(this.upload_temp_tag).catch((error) => {
         notifier.pushBackError('EXTENSION_UPLOAD_KEEP_ALIVE_FAIL', error)
       })
     },
@@ -913,7 +913,7 @@ export default Vue.extend({
       this.manifest = undefined
 
       try {
-        this.manifest = await kraken.fetchConsolidatedManifests()
+        this.manifest = await kraken.fetchConsolidatedManifestsZenoh()
       } catch (error) {
         this.manifest = String(error)
       }

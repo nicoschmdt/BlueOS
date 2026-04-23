@@ -68,14 +68,18 @@ export async function fetchManifestSource(identifier: string, data = true): Prom
  * present in the manifest wth higher priority will be kept, uses API v2
  * @returns {Promise<ExtensionData[]>}
  */
-export async function fetchConsolidatedManifests(): Promise<ExtensionData[]> {
-  const response = await back_axios({
-    method: 'get',
-    url: `${KRAKEN_API_V2_URL}/manifest/consolidated`,
-    timeout: 25000,
-  })
+export async function fetchConsolidatedManifestsZenoh(): Promise<ExtensionData[]> {
+  const response = await zenoh.query(
+    'kraken/manifest/consolidated',
+    QueryTarget.BestMatching,
+    25000,
+  )
 
-  return (response.data as ExtensionData[]).map((extension: ExtensionData) => ({
+  if (!response) {
+    throw new Error('No response from kraken/manifest/consolidated zenoh queryable')
+  }
+
+  return (response as ExtensionData[]).map((extension: ExtensionData) => ({
     ...extension,
     is_compatible: Object.values(extension.versions).some(
       (version) => version.images.some((image) => image.compatible),
@@ -135,29 +139,29 @@ export async function deleteManifestSource(identifier: string): Promise<void> {
 }
 
 /**
- * Enables a manifest source in kraken, uses API v2
+ * Enables a manifest source in kraken, uses Zenoh
  * @param {string} identifier The identifier of the manifest source
  * @returns {Promise<void>}
  */
-export async function enabledManifestSource(identifier: string): Promise<void> {
-  await back_axios({
-    method: 'post',
-    url: `${KRAKEN_API_V2_URL}/manifest/${identifier}/enable`,
-    timeout: 10000,
-  })
+export async function enabledManifestSourceZenoh(identifier: string): Promise<void> {
+  await zenoh.query(
+    `kraken/manifest/enable?identifier=${identifier}`,
+    QueryTarget.BestMatching,
+    10000,
+  )
 }
 
 /**
- * Disables a manifest source in kraken, uses API v2
+ * Disables a manifest source in kraken, uses Zenoh
  * @param {string} identifier The identifier of the manifest source
  * @returns {Promise<void>}
  */
-export async function disabledManifestSource(identifier: string): Promise<void> {
-  await back_axios({
-    method: 'post',
-    url: `${KRAKEN_API_V2_URL}/manifest/${identifier}/disable`,
-    timeout: 10000,
-  })
+export async function disabledManifestSourceZenoh(identifier: string): Promise<void> {
+  await zenoh.query(
+    `kraken/manifest/disable?identifier=${identifier}`,
+    QueryTarget.BestMatching,
+    10000,
+  )
 }
 
 /**
@@ -342,17 +346,34 @@ export async function uploadExtensionTarFile(
   return response.data
 }
 
+export async function uploadExtensionTarFileZenoh(
+  file: File,
+  onPhase?: (phase: string) => void,
+  timeout = 120000,
+): Promise<ExtensionUploadResponse | null> {
+  const buffer = new Uint8Array(await file.arrayBuffer())
+  let result: ExtensionUploadResponse | null = null
+  for await (const reply of zenoh.queryStream(
+    'kraken/extension/upload', QueryTarget.BestMatching, timeout, buffer,
+  )) {
+    if (reply?.phase) {
+      onPhase?.(reply.phase)
+    } else if (reply?.error) {
+      throw new Error(reply.error)
+    } else {
+      result = reply as ExtensionUploadResponse
+    }
+  }
+  return result
+}
+
 /**
  * Keep a temporary uploaded extension alive while the user configures metadata.
  * @param {string} tempTag The temporary tag returned by the upload endpoint
  * @returns {Promise<void>}
  */
-export async function keepTemporaryExtensionAlive(tempTag: string): Promise<void> {
-  await back_axios({
-    method: 'POST',
-    url: `${KRAKEN_API_V2_URL}/extension/upload/keep-alive?temp_tag=${tempTag}`,
-    timeout: 10000,
-  })
+export async function keepTemporaryExtensionAliveZenoh(tempTag: string): Promise<any | null> {
+  await zenoh.query(`kraken/extension/upload/keep-alive?temp_tag=${tempTag}`, QueryTarget.BestMatching)
 }
 
 /**
@@ -408,66 +429,34 @@ export async function createExtensionLogsSubscriber(
   return await zenoh.subscriber(topic, subscriberHandler)
 }
 
-const INSTALL_PROGRESS_TOPIC = 'kraken/extension/install/progress'
-
 export async function installExtensionZenoh(
   identifier: string,
   progressHandler?: (fragment: string) => void,
   tag?: string,
   stable = true,
   timeout = 600000,
-): Promise<any | null> {
-  return new Promise(async (resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup()
-      reject(new Error(`Install timed out after ${timeout}ms`))
-    }, timeout)
+): Promise<{ status: 'success' }> {
+  let queryKey = `kraken/extension/install?identifier=${identifier}`
+  if (tag) queryKey += `;tag=${tag}`
+  if (!stable) queryKey += ';stable=false'
 
-    let subscriber: Subscriber | null = null
-
-    const cleanup = async () => {
-      clearTimeout(timer)
-      await subscriber?.undeclare()
-    }
-
-    subscriber = await zenoh.subscriber(INSTALL_PROGRESS_TOPIC, async (sample: Sample) => {
-      const raw = sample.payload().to_string()
-      try {
-        const data = JSON.parse(raw)
-        if (data.identifier !== identifier) return
-
-        if (data.status === 'complete') {
-          await cleanup()
-          resolve({ status: 'success' })
-          return
-        }
-
-        progressHandler?.(raw)
-      } catch { /* ignore parse errors */ }
-    })
-
-    let queryKey = `kraken/extension/install?identifier=${identifier}`
-    if (tag) queryKey += `;tag=${tag}`
-    if (!stable) queryKey += ';stable=false'
-
-    const queryResult = await zenoh.query(queryKey, QueryTarget.BestMatching, 30000)
-    if (!queryResult || queryResult.error) {
-      await cleanup()
-      reject(new Error(queryResult?.error ?? 'Install query failed'))
-    }
-  })
+  for await (const reply of zenoh.queryStream(queryKey, QueryTarget.BestMatching, timeout)) {
+    if (reply?.error) throw new Error(reply.error)
+    progressHandler?.(JSON.stringify(reply))
+  }
+  return { status: 'success' }
 }
 
 export default {
   fetchManifestSources,
   fetchManifestSource,
-  fetchConsolidatedManifests,
+  fetchConsolidatedManifestsZenoh,
   fetchInstalledExtensionsZenoh,
   addManifestSource,
   updateManifestSource,
   deleteManifestSource,
-  enabledManifestSource,
-  disabledManifestSource,
+  enabledManifestSourceZenoh,
+  disabledManifestSourceZenoh,
   setManifestSourcesOrders,
   setManifestSourceOrder,
   installExtensionZenoh,
@@ -478,7 +467,8 @@ export default {
   listContainersZenoh,
   getContainersStatsZenoh,
   uploadExtensionTarFile,
-  keepTemporaryExtensionAlive,
+  uploadExtensionTarFileZenoh,
+  keepTemporaryExtensionAliveZenoh,
   finalizeExtension,
   getHistoricalLogsForExtension,
   createExtensionLogsSubscriber,

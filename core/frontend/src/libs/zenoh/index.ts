@@ -33,7 +33,12 @@ class ZenohManager {
     return this.sessionPromise
   }
 
-  public async query(key: string, target: QueryTarget, timeout = 30000) : Promise<any | null> {
+  public async query(
+    key: string,
+    target: QueryTarget,
+    timeout = 30000,
+    payload?: Uint8Array,
+  ) : Promise<any | null> {
     const session = await this.getSession()
     if (!session) {
       console.error('Zenoh session not initialized')
@@ -42,6 +47,7 @@ class ZenohManager {
 
     const receiver: Receiver | void = session.get(key, {
       target,
+      payload,
     })
 
     if (!(receiver instanceof Receiver)) {
@@ -67,12 +73,55 @@ class ZenohManager {
       return null
     }
 
-    const payload = (reply as { result: () => Sample }).result()
+    const sample = (reply as { result: () => Sample }).result()
     try {
-      return JSON.parse(payload.payload().to_string())
+      return JSON.parse(sample.payload().to_string())
     } catch (error) {
       console.error('Error parsing response:', error)
       return null
+    }
+  }
+
+  public async* queryStream(
+    key: string,
+    target: QueryTarget,
+    timeout = 120000,
+    payload?: Uint8Array,
+  ): AsyncGenerator<any, void, void> {
+    const session = await this.getSession()
+    if (!session) {
+      console.error('Zenoh session not initialized')
+      return
+    }
+
+    const receiver: Receiver | void = session.get(key, { target, payload })
+    if (!(receiver instanceof Receiver)) {
+      console.error('Failed to create query receiver. No queryable found or connection error.')
+      return
+    }
+
+    const deadline = Date.now() + timeout
+    while (true) {
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) {
+        console.error(`Query stream timed out after ${timeout}ms`)
+        return
+      }
+
+      const timeoutPromise = new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), remaining)
+      })
+
+      const reply = await Promise.race([receiver.receive(), timeoutPromise])
+      if (reply === null || reply === RecvErr.Disconnected) return
+      if (reply === RecvErr.MalformedReply) continue
+
+      const sample = (reply as { result: () => Sample }).result()
+      try {
+        yield JSON.parse(sample.payload().to_string())
+      } catch (error) {
+        console.error('Error parsing stream reply:', error)
+      }
     }
   }
 

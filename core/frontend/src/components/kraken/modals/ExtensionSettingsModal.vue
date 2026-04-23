@@ -385,7 +385,7 @@ export default Vue.extend({
       this.prepareRequest()
 
       try {
-        await (enable ? kraken.enabledManifestSource(identifier) : kraken.disabledManifestSource(identifier))
+        await (enable ? kraken.enabledManifestSourceZenoh(identifier) : kraken.disabledManifestSourceZenoh(identifier))
 
         this.fetchManifestsSources()
       } catch (error) {

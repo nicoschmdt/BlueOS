@@ -8,33 +8,28 @@ from loguru import logger
 
 
 class ExtensionHandlers:
-    INSTALL_PROGRESS_TOPIC = "kraken/extension/install/progress"
-
     def __init__(self, router: ZenohRouter) -> None:
         self.router = router
 
-    @staticmethod
-    async def _install_progress_stream(identifier: str, extension: Extension) -> AsyncGenerator[str, None]:
-        async for chunk in extension.install():
-            try:
-                payload = json.loads(chunk)
-                payload["identifier"] = identifier
-                yield handle_json(payload)
-            except Exception as e:
-                logger.debug(f"Failed to process install progress chunk: {e}")
-
-    async def install_handler(self, identifier: str, tag: str = "", stable: str = "true") -> dict[str, str]:
+    async def install_handler(
+        self, identifier: str, tag: str = "", stable: str = "true"
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """
+        Install an extension and stream Docker pull progress. Each yielded value becomes a
+        separate zenoh query reply; the stream ends when the install completes.
+        """
         if tag:
             extension = cast(Extension, await Extension.from_manifest(identifier, tag))
         else:
             extension = await Extension.from_latest(identifier, stable.lower() == "true")
 
-        self.router.publish_from_generator(
-            self.INSTALL_PROGRESS_TOPIC,
-            self._install_progress_stream(identifier, extension),
-            on_complete=handle_json({"identifier": identifier, "status": "complete"}),
-        )
-        return {"status": "started"}
+        async for chunk in extension.install():
+            try:
+                payload = json.loads(chunk)
+                payload["identifier"] = identifier
+                yield payload
+            except Exception as e:
+                logger.debug(f"Failed to process install progress chunk: {e}")
 
     async def uninstall_handler(self, identifier: str, tag: str = "") -> dict[str, str]:
         """
@@ -79,6 +74,33 @@ class ExtensionHandlers:
         extensions = cast(List[Extension], await Extension.from_settings())
         return [ext.source.dict() for ext in extensions if ext.source.identifier != ""]
 
+    async def keep_uploaded_extension_alive_handler(self, temp_tag: str) -> None:
+        """
+        Refresh the keep-alive timestamp for a temporary extension while the user is editing metadata.
+        """
+        Extension.keep_temporary_extension_alive(temp_tag)
+
+    async def upload_handler(self, content: bytes) -> AsyncGenerator[dict[str, Any], None]:
+        """
+        Load a Docker image from an uploaded tar, inspect it, and create a temporary extension.
+        Each yielded value becomes a separate zenoh query reply: intermediate phases carry a
+        `phase` key, the final reply carries the extension metadata.
+        """
+        if not content:
+            raise ValueError("Empty tar payload")
+
+        yield {"phase": "loading"}
+        image_name = await Extension.load_image_from_tar(content)
+        yield {"phase": "inspecting"}
+        metadata = await Extension.inspect_image_labels(image_name)
+        yield {"phase": "finalizing"}
+        temp_extension = await Extension.create_temporary_extension(image_name, metadata)
+        yield {
+            "temp_tag": temp_extension.tag,
+            "metadata": metadata,
+            "image_name": image_name,
+        }
+
     def register_queryables(self) -> None:
         self.router.add_queryable("extension/fetch", self.fetch_handler)
         self.router.add_queryable("extension/install", self.install_handler)
@@ -86,11 +108,5 @@ class ExtensionHandlers:
         self.router.add_queryable("extension/enable", self.enable_handler)
         self.router.add_queryable("extension/disable", self.disable_handler)
         self.router.add_queryable("extension/restart", self.restart_handler)
-
-
-def handle_json(data: Any) -> str:
-    try:
-        return json.dumps(data, default=str)
-    except (TypeError, ValueError) as e:
-        logger.error(f"Error serializing data to JSON: {data}, {e}")
-        return '{"error": "Serialization failed"}'
+        self.router.add_queryable("extension/upload/keep-alive", self.keep_uploaded_extension_alive_handler)
+        self.router.add_queryable("extension/upload", self.upload_handler, has_payload=True)

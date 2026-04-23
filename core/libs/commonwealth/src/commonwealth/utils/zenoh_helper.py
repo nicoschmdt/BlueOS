@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import re
 import threading
@@ -120,7 +121,16 @@ class ZenohRouter:
         self.prefix = service_name
         self.zenoh_session = ZenohSession(service_name)
 
-    def add_queryable(self, path: str, func: Callable[..., Any]) -> None:
+    def add_queryable(self, path: str, func: Callable[..., Any], has_payload: bool = False) -> None:
+        """
+        Register a zenoh queryable at `prefix/path`. The handler receives the query's URL parameters
+        as keyword arguments. When `has_payload` is True, the query's binary payload is also
+        forwarded as the first positional argument (useful for file uploads).
+
+        If `func` is an async generator, each yielded value is sent as an individual reply to the
+        query, enabling streaming progress updates (zenoh natively supports multi-reply queries).
+        Otherwise the handler's return value is sent as a single reply.
+        """
         full_path = self.prefix
         if path:
             full_path += f"/{path}"
@@ -132,9 +142,16 @@ class ZenohRouter:
             async def _handle_async(q: zenoh.Query) -> None:
                 with q:
                     try:
-                        response = await func(**params)
-                        if response is not None:
-                            q.reply(key_expr, json.dumps(response, default=str))
+                        args = (bytes(q.payload) if q.payload else b"",) if has_payload else ()
+                        result = func(*args, **params)
+                        if inspect.isasyncgen(result):
+                            async for item in result:
+                                if item is not None:
+                                    q.reply(key_expr, json.dumps(item, default=str))
+                        else:
+                            response = await result
+                            if response is not None:
+                                q.reply(key_expr, json.dumps(response, default=str))
                     except Exception as e:
                         logger.exception(f"Error in zenoh query handler: {key_expr}")
                         error_response = {
