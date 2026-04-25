@@ -10,10 +10,24 @@ import fastapi
 import zenoh
 from fastapi.routing import APIRoute
 from loguru import logger
+from pydantic import BaseModel
 
 from .Singleton import Singleton
 
 PARAM_REGEX = r"{[a-zA-Z0-9_]+}"
+
+
+def _json_default(obj: Any) -> Any:
+    """
+    json.dumps fallback that knows how to serialize pydantic models (v1 and v2).
+    Without this, BaseModel instances fall through to str() and end up as their
+    Python repr ("field='value' ...") instead of proper JSON objects.
+    """
+    if isinstance(obj, BaseModel):
+        if hasattr(obj, "model_dump"):
+            return obj.model_dump()
+        return obj.dict()
+    return str(obj)
 
 
 class ZenohSession(metaclass=Singleton):
@@ -147,11 +161,11 @@ class ZenohRouter:
                         if inspect.isasyncgen(result):
                             async for item in result:
                                 if item is not None:
-                                    q.reply(key_expr, json.dumps(item, default=str))
+                                    q.reply(key_expr, json.dumps(item, default=_json_default))
                         else:
                             response = await result
                             if response is not None:
-                                q.reply(key_expr, json.dumps(response, default=str))
+                                q.reply(key_expr, json.dumps(response, default=_json_default))
                     except Exception as e:
                         logger.exception(f"Error in zenoh query handler: {key_expr}")
                         error_response = {

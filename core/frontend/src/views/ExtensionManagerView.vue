@@ -914,6 +914,8 @@ export default Vue.extend({
 
       try {
         this.manifest = await kraken.fetchConsolidatedManifestsZenoh()
+        console.log('manifest')
+        console.log(this.manifest)
       } catch (error) {
         this.manifest = String(error)
       }

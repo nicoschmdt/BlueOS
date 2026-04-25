@@ -79,6 +79,9 @@ export async function fetchConsolidatedManifestsZenoh(): Promise<ExtensionData[]
     throw new Error('No response from kraken/manifest/consolidated zenoh queryable')
   }
 
+  console.log('response')
+  console.log(response)
+
   return (response as ExtensionData[]).map((extension: ExtensionData) => ({
     ...extension,
     is_compatible: Object.values(extension.versions).some(
