@@ -14,7 +14,7 @@ import psutil
 from commonwealth.utils.DHCPServerManager import Dnsmasq as DHCPServerManager
 from commonwealth.utils.general import HostOs, device_id, get_host_os
 from loguru import logger
-from pyroute2 import IW, IPRoute
+from pyroute2 import AsyncIPRoute, AsyncIW
 from typedefs import WifiCredentials
 
 
@@ -40,8 +40,10 @@ class HotspotManager:
         ap_ssid: Optional[str] = None,
         ap_passphrase: Optional[str] = None,
     ) -> None:
-        self.iw = IW()
-        self.ipr = IPRoute()
+        self.iw = AsyncIW()
+        self.ipr = AsyncIPRoute()
+        self._netlink_ready = False
+        self._start_lock = asyncio.Lock()
 
         self._ap_interface_name = ap_interface_name
         self.supports_hotspot = self.check_hotspot_support()
@@ -103,60 +105,96 @@ class HotspotManager:
             logger.error(f"Invalid binary: {error}")
             return False
 
-    def base_interface_channel_frequency(self) -> int:
-        wireless_interfaces = self.iw.get_interfaces_dict()
-        if self._base_interface not in wireless_interfaces:
-            raise RuntimeError("Could not find base interface.")
+    async def _ensure_netlink(self) -> None:
+        # AsyncIW needs bind() before nl80211 requests; AsyncIPRoute needs setup_endpoint().
+        if self._netlink_ready:
+            return
+        await self.iw.bind()
+        await self.ipr.setup_endpoint()
+        self._netlink_ready = True
+
+    async def base_interface_channel_frequency(self) -> int:
         last_channel = -1
         time_last_channel_change = time.time()
         time_start_searching = time.time()
         while True:
+            wireless_interfaces = await self.iw.get_interfaces_dict()
+            if self._base_interface not in wireless_interfaces:
+                raise RuntimeError("Could not find base interface.")
+
             current_channel = int(wireless_interfaces[self._base_interface][3])
             if current_channel != last_channel:
                 time_last_channel_change = time.time()
                 last_channel = current_channel
+
             seconds_in_same_channel = time.time() - time_last_channel_change
             seconds_searching = time.time() - time_start_searching
             if seconds_in_same_channel > 2:
                 return current_channel
             if seconds_searching > 15:
-                raise RuntimeError("Could not find base interface channel. Timeout exceeded.")
+                # Interface keeps hopping channels (e.g. scanning), settle for the last one seen.
+                logger.warning(f"Base interface channel never settled, using {current_channel}.")
+                return current_channel
 
-    def desired_channel_frequency(self) -> int:
-        return self.base_interface_channel_frequency()
+            await asyncio.sleep(0.1)
 
-    def _create_virtual_interface(self) -> None:
+    async def desired_channel_frequency(self) -> int:
+        return await self.base_interface_channel_frequency()
+
+    async def _run_command(self, *args: str) -> None:
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await process.communicate()
+        if process.returncode != 0:
+            detail = stderr.decode(errors="ignore").strip()
+            raise RuntimeError(f"{' '.join(args)} failed ({process.returncode}): {detail}")
+
+    def _ap_interface_flags(self) -> List[str]:
+        stats = psutil.net_if_stats().get(self._ap_interface_name)
+        return str(stats.flags).split(",") if stats else []
+
+    async def _create_virtual_interface(self) -> None:
         logger.debug("Deleting virtual access point interface (if exists).")
-        wireless_interfaces = self.iw.get_interfaces_dict()
-        if self._ap_interface_name in wireless_interfaces:
-            interface_index = int(self.ipr.link_lookup(ifname=self._ap_interface_name)[0])
-            self.iw.del_interface(interface_index)
-        self._reach_condition_or_timeout(
-            lambda self: self._ap_interface_name not in self.iw.get_interfaces_dict(),
+        # Create/up waits use psutil; nl80211 can report "gone" before the netdev is removed.
+        iface_present = self._ap_interface_name in psutil.net_if_stats()
+        iface_present = iface_present or self._ap_interface_name in await self.iw.get_interfaces_dict()
+        if iface_present:
+            try:
+                indexes = await self.ipr.link_lookup(ifname=self._ap_interface_name)
+                if not indexes:
+                    raise RuntimeError("Interface index not found.")
+                await self.iw.del_interface(int(indexes[0]))
+            except Exception as error:
+                logger.warning(f"nl80211 delete failed for {self._ap_interface_name}, trying iw: {error}")
+                await self._run_command("iw", "dev", self._ap_interface_name, "del")
+        await self._reach_condition_or_timeout(
+            lambda self: self._ap_interface_name not in psutil.net_if_stats(),
             "Could not delete virtual interface. Timeout exceeded.",
         )
 
         logger.debug("Creating virtual access point interface.")
-        # pylint: disable=consider-using-with
-        subprocess.Popen(
-            shlex.split(f"iw dev {self._base_interface} interface add {self._ap_interface_name} type __ap")
+        await self._run_command(
+            "iw", "dev", self._base_interface, "interface", "add", self._ap_interface_name, "type", "__ap"
         )
         # Following 2 lines are an alternative I could not get to work since its docs are not very clear
         # base_interface_index = int(self.ipr.link_lookup(ifname=self._base_interface)[0])
         # self.iw.add_interface(ifname=self._ap_interface_name, iftype="ap_vlan", dev=base_interface_index)
-        self._reach_condition_or_timeout(
+        await self._reach_condition_or_timeout(
             lambda self: self._ap_interface_name in psutil.net_if_stats(),
             "Could not create virtual interface. Timeout exceeded.",
         )
 
         logger.debug("Starting virtual access point interface.")
-        # pylint: disable=consider-using-with
-        subprocess.Popen(shlex.split(f"ifconfig {self._ap_interface_name} up"))
-        # Following 2 lines are an alternative I could not get to work since its docs are not very clear
-        # virtual_interface_index = int(self.ipr.link_lookup(ifname=self._ap_interface_name)[0])
-        # self.ipr.link("set", index=virtual_interface_index, state="up")
-        self._reach_condition_or_timeout(
-            lambda self: self._ap_interface_name in psutil.net_if_stats() and psutil.net_if_stats()[self._ap_interface_name][0],  # fmt: skip
+        indexes = await self.ipr.link_lookup(ifname=self._ap_interface_name)
+        if not indexes:
+            raise RuntimeError(f"Could not find interface index for {self._ap_interface_name}.")
+        await self.ipr.link("set", index=int(indexes[0]), state="up")
+        await self._reach_condition_or_timeout(
+            # psutil's isup means IFF_RUNNING, which uap0 only gets once hostapd beacons on it.
+            lambda self: "up" in self._ap_interface_flags(),
             "Could not start virtual interface. Timeout exceeded.",
         )
 
@@ -167,22 +205,27 @@ class HotspotManager:
         logger.info("Starting hotspot.")
         if not self.supports_hotspot:
             raise RuntimeError("Hotspot not supported on this device.")
-        try:
-            self._create_temp_config_file()
-            self._create_virtual_interface()
-            # pylint: disable=consider-using-with
-            if not self.is_running():
-                self._subprocess = subprocess.Popen(self.command_list(), shell=False, encoding="utf-8", errors="ignore")
-                await asyncio.sleep(3)
+        # Watchdogs and the API can all call this, and the awaits below must not interleave.
+        async with self._start_lock:
+            try:
+                await self._ensure_netlink()
+                await self._create_temp_config_file()
+                await self._create_virtual_interface()
+                # pylint: disable=consider-using-with
                 if not self.is_running():
-                    exit_code = self._subprocess.returncode
-                    raise RuntimeError(f"Failed to initialize Hostapd ({exit_code}).")
-            if not self._dhcp_server:
-                self._dhcp_server = DHCPServerManager(self._ap_interface_name, self._ipv4_gateway)
-                return
-            await self._dhcp_server.restart()
-        except Exception as error:
-            raise RuntimeError(f"Unable to start hotspot. {error}") from error
+                    self._subprocess = subprocess.Popen(
+                        self.command_list(), shell=False, encoding="utf-8", errors="ignore"
+                    )
+                    await asyncio.sleep(3)
+                    if not self.is_running():
+                        exit_code = self._subprocess.returncode
+                        raise RuntimeError(f"Failed to initialize Hostapd ({exit_code}).")
+                if not self._dhcp_server:
+                    self._dhcp_server = DHCPServerManager(self._ap_interface_name, self._ipv4_gateway)
+                    return
+                await self._dhcp_server.restart()
+            except Exception as error:
+                raise RuntimeError(f"Unable to start hotspot. {error}") from error
 
     def stop(self) -> None:
         logger.info("Stopping hotspot.")
@@ -210,8 +253,8 @@ class HotspotManager:
         config_dir = pathlib.Path(tempfile.tempdir or "/")
         return config_dir.joinpath("hostapd.conf")
 
-    def hostapd_config(self) -> str:
-        desired_channel_frequency = self.desired_channel_frequency()
+    async def hostapd_config(self) -> str:
+        desired_channel_frequency = await self.desired_channel_frequency()
         desired_channel_number = HotspotManager.channel_number(desired_channel_frequency)
 
         return (
@@ -239,10 +282,10 @@ class HotspotManager:
             "rsn_pairwise=CCMP\n"
         )
 
-    def _create_temp_config_file(self) -> None:
+    async def _create_temp_config_file(self) -> None:
         logger.info(f"Saving temporary hostapd config file on {self.config_path()}")
         with open(self.config_path(), "w", encoding="utf-8") as f:
-            f.write(self.hostapd_config())
+            f.write(await self.hostapd_config())
 
     def _include_interface_on_dhcpcd(self) -> None:
         if not self.supports_hotspot:
@@ -281,15 +324,17 @@ class HotspotManager:
         with open("/etc/dhcpcd.conf", "w", encoding="utf-8") as f:
             f.writelines(new_lines)
 
-    def _reach_condition_or_timeout(self, condition: Callable[["HotspotManager"], bool], timeout_message: str) -> None:
+    async def _reach_condition_or_timeout(
+        self, condition: Callable[["HotspotManager"], bool], timeout_message: str
+    ) -> None:
         time_start = time.time()
         while True:
             if condition(self):
-                time.sleep(0.3)
+                await asyncio.sleep(0.3)
                 break
             if time.time() - time_start > 5:
                 raise RuntimeError(timeout_message)
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
 
     @staticmethod
     def channel_number(frequency: int) -> int:
