@@ -318,7 +318,6 @@ class HotspotManager:
             new_lines.append(f"interface {self._ap_interface_name}\n")
             new_lines.append(f"    static ip_address={self._ipv4_gateway}/24\n")
             new_lines.append("    nohook wpa_supplicant\n")
-            new_lines.append("END\n")
             new_lines.append("#blueos-end\n")
 
         with open("/etc/dhcpcd.conf", "w", encoding="utf-8") as f:
