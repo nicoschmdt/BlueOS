@@ -57,6 +57,10 @@ export default Vue.extend({
   }),
   computed: {
     tooltip() {
+      if (helper.dns_failing) {
+        return 'The vehicle reaches the internet by IP, but no hostname resolves.'
+          + ' Check DNS nameservers under Network.'
+      }
       switch (helper.has_internet) {
         case InternetConnectionState.ONLINE:
           return 'Vehicle has internet access.'
@@ -71,6 +75,9 @@ export default Vue.extend({
       }
     },
     icon(): string {
+      if (helper.dns_failing) {
+        return 'mdi-web-cancel'
+      }
       switch (helper.has_internet) {
         case InternetConnectionState.ONLINE:
           return 'mdi-web'
