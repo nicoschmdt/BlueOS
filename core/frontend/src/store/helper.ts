@@ -9,22 +9,9 @@ import store from '@/store'
 import { helper_service } from '@/types/frontend_services'
 import { InternetConnectionState, Service } from '@/types/helper'
 import back_axios, { isBackendOffline } from '@/utils/api'
+import { connectivityVerdict, SiteStatuses } from '@/utils/connectivity'
 
 const notifier = new Notifier(helper_service)
-
-type site = {
-  hostname: string;
-  path: string;
-  port: number;
-}
-
-type CheckSiteStatus = {
-  site: site;
-  online: boolean;
-  error: string | null;
-};
-
-type SiteStatus = Record<string, CheckSiteStatus>
 
 @Module({
   dynamic: true,
@@ -40,6 +27,8 @@ class PingStore extends VuexModule {
   services: Service[] = []
 
   reachable_hosts: string[] = []
+
+  dns_failing = false
 
   internet_check_failures = 0
 
@@ -59,6 +48,11 @@ class PingStore extends VuexModule {
   @Mutation
   setReachableHosts(hosts: string[]): void {
     this.reachable_hosts = hosts
+  }
+
+  @Mutation
+  setDnsFailing(dns_failing: boolean): void {
+    this.dns_failing = dns_failing
   }
 
   @Mutation
@@ -86,22 +80,16 @@ class PingStore extends VuexModule {
       .then((response) => {
         this.resetInternetCheckFailures()
         try {
-          const sites = Object.values(response.data as SiteStatus)
-          const online_sites = sites.filter((item) => item.online)
-          this.setReachableHosts(online_sites.map((item) => item.site.hostname))
+          const sites = Object.values(response.data as SiteStatuses)
+          this.setReachableHosts(sites.filter((item) => item.online).map((item) => item.site.hostname))
 
-          // A site that did not answer inside Helper's budget carries no verdict.
-          const decided_sites = sites.filter((item) => item.error !== 'timeout')
-          if (decided_sites.length === 0) {
-            return
+          const { state, dns_failing } = connectivityVerdict(sites)
+          if (dns_failing !== undefined) {
+            this.setDnsFailing(dns_failing)
           }
-          if (online_sites.length === decided_sites.length) {
-            this.setHasInternet(InternetConnectionState.ONLINE)
-            return
+          if (state !== undefined) {
+            this.setHasInternet(state)
           }
-          this.setHasInternet(
-            online_sites.length > 0 ? InternetConnectionState.LIMITED : InternetConnectionState.OFFLINE,
-          )
         } catch {
           // Helper answered; keep the last verdict if the body is unusable.
         }
@@ -113,6 +101,7 @@ class PingStore extends VuexModule {
           return
         }
         this.setHasInternet(InternetConnectionState.UNKNOWN)
+        this.setDnsFailing(false)
         this.setReachableHosts([])
         notifier.pushBackError('INTERNET_CHECK_FAIL', error)
       })
