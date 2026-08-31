@@ -1,4 +1,5 @@
 import os
+import socket
 import subprocess
 import uuid
 from pathlib import Path
@@ -426,6 +427,31 @@ def test_device_id_raises_without_sources(fs: FakeFilesystem) -> None:
     fs.create_dir("/etc")
     with pytest.raises(ValueError, match="Could not get device id"):
         general.device_id()
+
+
+def _wrapped_gaierror() -> BaseException:
+    # aiohttp keeps the original failure on os_error
+    error = Exception("Cannot connect to host registry-1.docker.io:443")
+    error.os_error = socket.gaierror(-3, "Temporary failure in name resolution")  # type: ignore[attr-defined]
+    return error
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        (socket.gaierror(-3, "Temporary failure in name resolution"), True),
+        (socket.gaierror(-2, "Name or service not known"), True),
+        (_wrapped_gaierror(), True),
+        # docker reports a failed lookup as text, without an exception type to check
+        (RuntimeError("lookup auth.docker.io on 192.168.31.1:53: i/o timeout"), True),
+        # the name resolved, the connection did not
+        (ConnectionRefusedError(111, "Connection refused"), False),
+        (socket.timeout("timed out"), False),
+        (RuntimeError("Error status 500"), False),
+    ],
+)
+def test_is_name_resolution_error(error: BaseException, expected: bool) -> None:
+    assert general.is_name_resolution_error(error) is expected
 
 
 def test_is_running_as_root_matches_euid() -> None:

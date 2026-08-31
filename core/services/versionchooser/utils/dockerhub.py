@@ -14,6 +14,7 @@ from typing import Any, List, Optional, Tuple
 from warnings import warn
 
 import aiohttp
+from commonwealth.utils.general import is_name_resolution_error
 from loguru import logger
 
 RETRY_ATTEMPTS = 3
@@ -39,16 +40,6 @@ def get_current_arch() -> str:
             return "arm64"
         case _:
             raise RuntimeError(f"Unknown architecture! {machine}")
-
-
-def is_name_resolution_error(error: BaseException) -> bool:
-    if isinstance(error, socket.gaierror):
-        return True
-    if isinstance(getattr(error, "os_error", None), socket.gaierror):
-        return True
-    # e.g. lookup auth.docker.io on 192.168.31.1:53: i/o timeout
-    message = str(error).lower()
-    return "lookup " in message and ":53" in message
 
 
 def remote_tags_error_message(error: BaseException) -> str:

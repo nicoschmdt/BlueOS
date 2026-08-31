@@ -8,15 +8,11 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 import aiodocker
 import appdirs
 import docker
+from commonwealth.utils.general import is_name_resolution_error
 from fastapi import Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from loguru import logger
-from utils.dockerhub import (
-    DNS_FAILURE_MESSAGE,
-    TagFetcher,
-    is_name_resolution_error,
-    remote_tags_error_message,
-)
+from utils.dockerhub import DNS_FAILURE_MESSAGE, TagFetcher, remote_tags_error_message
 
 DOCKER_CONFIG_PATH = pathlib.Path(appdirs.user_config_dir("bootstrap"), "startup.json")
 

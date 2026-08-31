@@ -7,13 +7,13 @@ from unittest import mock
 from unittest.mock import AsyncMock
 
 import pytest
+from commonwealth.utils.general import is_name_resolution_error
 from utils.chooser import VersionChooser
 from utils.dockerhub import (
     DNS_FAILURE_MESSAGE,
     TagFetcher,
     TagMetadata,
     get_json_with_retry,
-    is_name_resolution_error,
     remote_tags_error_message,
 )
 

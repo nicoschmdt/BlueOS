@@ -1,5 +1,6 @@
 import asyncio
 import os
+import socket
 import subprocess
 import uuid
 from dataclasses import asdict, dataclass
@@ -56,6 +57,16 @@ def get_host_os() -> HostOs:
     if "bullseye" in os_release.lower():
         return HostOs.Bullseye
     return HostOs.Other
+
+
+def is_name_resolution_error(error: BaseException) -> bool:
+    if isinstance(error, socket.gaierror):
+        return True
+    if isinstance(getattr(error, "os_error", None), socket.gaierror):
+        return True
+    # e.g. lookup auth.docker.io on 192.168.31.1:53: i/o timeout
+    message = str(error).lower()
+    return "lookup " in message and ":53" in message
 
 
 def delete_everything(path: Path, ignore: list[Path] | None = None, open_files: set[Path] | None = None) -> None:
