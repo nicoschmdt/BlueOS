@@ -27,6 +27,7 @@ from commonwealth.utils.general import (
     CpuType,
     blueos_version,
     get_cpu_type,
+    is_name_resolution_error,
     local_hardware_identifier,
     local_unique_identifier,
 )
@@ -92,6 +93,7 @@ class WebsiteStatus(BaseModel):
     site: Website
     online: bool
     error: Optional[str] = None
+    dns_failure: bool = False
 
 
 class ServiceMetadata(BaseModel):
@@ -140,6 +142,7 @@ class SimpleHttpResponse(BaseModel):
     as_json: Optional[Union[List[Any], Dict[Any, Any]]]
     error: Optional[str]
     timeout: bool
+    dns_failure: bool = False
 
 
 class Helper:
@@ -283,6 +286,8 @@ class Helper:
             error_msg = str(e) if str(e).isascii() else type(e).__name__
             logger.warning(error_msg)
             request_response.error = error_msg
+            # socket.gaierror lands here, and only the exception tells a failed lookup from a refused connection
+            request_response.dns_failure = is_name_resolution_error(e)
 
         except Exception as e:
             # Binary data from non-HTTP services can end up in exception messages
@@ -456,6 +461,7 @@ class Helper:
             website_status.online = True
         else:
             website_status.error = response.error
+            website_status.dns_failure = response.dns_failure
             logger.warning(f"{log_msg}: Offline: {website_status.error}.")
 
         return website_status
