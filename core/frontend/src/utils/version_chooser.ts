@@ -4,12 +4,15 @@ import Notifier from '@/libs/notifier'
 import { version_chooser_service } from '@/types/frontend_services'
 import {
   DockerLoginInfo,
-  LocalVersionsQuery, Version, VersionsQuery, VersionType,
+  LocalVersionsQuery, ReleaseNotes, Version, VersionsQuery, VersionType,
 } from '@/types/version-chooser'
 import back_axios from '@/utils/api'
+import { fetchWithVehicleFallback } from '@/utils/helper_functions'
 
 const API_URL = '/version-chooser/v1.0'
 const DEFAULT_REMOTE_IMAGE = 'bluerobotics/blueos-core'
+const RELEASES_API_URL = 'https://api.github.com/repos/bluerobotics/BlueOS/releases?per_page=100'
+const DOCS_URL = 'https://blueos.cloud/docs'
 
 const notifier = new Notifier(version_chooser_service)
 
@@ -28,19 +31,22 @@ function fixVersion(version: string): string | null {
   return version
 }
 
-function isSemVer(version: string): boolean {
-  // validates a version as SemVer compliant
+function toSemVer(version: string): SemVer | undefined {
   const fixed_version = fixVersion(version)
   if (fixed_version == null) {
-    return false
+    return undefined
   }
 
   try {
-    const semver = new SemVer(fixed_version)
-    return semver !== null
+    return new SemVer(fixed_version)
   } catch (error) {
-    return false
+    return undefined
   }
+}
+
+function isSemVer(version: string): boolean {
+  // validates a version as SemVer compliant
+  return toSemVer(version) !== undefined
 }
 
 function getVersionType(version: Version | null) : VersionType | undefined {
@@ -129,6 +135,88 @@ function getLatestVersion(versions_query: VersionsQuery, current_version: Versio
   }
 }
 
+interface GitHubRelease {
+  tag_name: string,
+  body: string | null,
+  html_url: string,
+  draft: boolean,
+}
+
+let release_notes_request: Promise<Map<string, ReleaseNotes>> | undefined
+
+async function requestReleaseNotes(): Promise<Map<string, ReleaseNotes>> {
+  const response = await fetchWithVehicleFallback(RELEASES_API_URL)
+  if (!response.ok) {
+    throw new Error(`GitHub answered with ${response.status} while fetching the BlueOS releases`)
+  }
+  const releases = await response.json() as GitHubRelease[]
+  return new Map(
+    releases
+      .filter((release) => !release.draft && release.body)
+      .map((release): [string, ReleaseNotes] => [release.tag_name, {
+        tag: release.tag_name,
+        body: release.body ?? '',
+        url: release.html_url,
+      }]),
+  )
+}
+
+/**
+ * Fetches the notes published for every BlueOS release, indexed by version tag.
+ * Memoized, so a page listing many versions performs a single request. A failed request is
+ * dropped from the cache to let the next reader retry, and resolves to an empty index:
+ * release notes are cosmetic and should never surface an error to the user.
+ * @returns Release notes by version tag, empty when GitHub is unreachable
+ */
+async function fetchReleaseNotes(): Promise<Map<string, ReleaseNotes>> {
+  release_notes_request = release_notes_request ?? requestReleaseNotes()
+    .catch(() => {
+      release_notes_request = undefined
+      return new Map<string, ReleaseNotes>()
+    })
+  return release_notes_request
+}
+
+/**
+ * Fetches the release notes for a single image, when it has any.
+ * Only the official BlueOS image is covered: forks have their own releases, and tags that are
+ * not versions (`master`, `factory`, branch builds) have no release to point at.
+ * @param repository - Docker repository of the image, e.g. `bluerobotics/blueos-core`
+ * @param tag - Docker tag of the image, e.g. `1.4.5` or `1.5.0-beta.42`
+ * @returns Notes for that version, or undefined when there are none
+ */
+async function getReleaseNotes(repository: string, tag: string): Promise<ReleaseNotes | undefined> {
+  const version = fixVersion(tag)
+  if (repository !== DEFAULT_REMOTE_IMAGE || version === null || !isSemVer(tag)) {
+    return undefined
+  }
+  return (await fetchReleaseNotes()).get(version)
+}
+
+/**
+ * Documentation URL for a given version.
+ * The docs site publishes one path per release line (`/docs/1.4/`) up to the current stable one.
+ * Pre-releases of a line that is not out yet, and anything that is not a 1.x+ version, are only
+ * covered by `/docs/latest/`.
+ * @param tag - Docker tag of the image, e.g. `1.4.5` or `1.5.0-beta.42`
+ * @param latest_stable_tag - Newest stable tag known, when the remote versions are available
+ * @returns URL of the documentation that matches the version as closely as possible
+ */
+function getDocsUrl(tag: string, latest_stable_tag?: string): string {
+  const version = toSemVer(tag)
+  if (version === undefined || version.major < 1) {
+    return `${DOCS_URL}/latest/`
+  }
+
+  const latest_stable = latest_stable_tag === undefined ? undefined : toSemVer(latest_stable_tag)
+  const release_line = new SemVer(`${version.major}.${version.minor}.0`)
+  const line_is_documented = latest_stable === undefined
+    ? version.prerelease.length === 0
+    : !sem_ver_greater(release_line, latest_stable)
+
+  return line_is_documented ? `${DOCS_URL}/${version.major}.${version.minor}/` : `${DOCS_URL}/latest/`
+}
+
 async function loadLocalVersions(): Promise<LocalVersionsQuery> {
   return back_axios({
     method: 'get',
@@ -214,9 +302,11 @@ export {
   dockerLogin,
   dockerLogout,
   fixVersion,
+  getDocsUrl,
   getLatestBeta,
   getLatestStable,
   getLatestVersion,
+  getReleaseNotes,
   getVersionType,
   isSemVer,
   loadAvailableVersions,
