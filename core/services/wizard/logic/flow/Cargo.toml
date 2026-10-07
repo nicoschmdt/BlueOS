@@ -1,0 +1,9 @@
+[package]
+name = "blueos-wizard-flow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+blueos-wizard-catalog = { path = "../catalog" }
