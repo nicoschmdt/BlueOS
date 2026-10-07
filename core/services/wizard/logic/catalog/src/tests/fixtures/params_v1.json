@@ -1,0 +1,11 @@
+{
+    "params/ardupilot/ArduSub/4.4/navigator/Standard BlueROV2.params": { "FRAME_CONFIG": 1, "SERVO9_FUNCTION": 59 },
+    "params/ardupilot/ArduSub/4.5/navigator/Standard BlueROV2.params": { "FRAME_CONFIG": 1, "SERVO9_FUNCTION": 59 },
+    "params/ardupilot/ArduSub/4.5/navigator/Heavy BlueROV2.params": { "FRAME_CONFIG": 2, "SERVO9_FUNCTION": 59 },
+    "params/ardupilot/ArduSub/4.6/navigator/Standard BlueROV2.params": { "FRAME_CONFIG": 1, "SERVO9_FUNCTION": 59 },
+    "params/ardupilot/ArduSub/3.6/navigator/Standard BlueROV2.params": { "FRAME_CONFIG": 1 },
+    "params/ardupilot/Rover/4.5/navigator/BlueBoat.params": { "FRAME_CLASS": 2 },
+    "params/ardupilot/ArduSub/4.5/pixhawk1/Standard BlueROV2.params": { "FRAME_CONFIG": 1 },
+    "params/ardupilot/common/frames.param": { "FRAME_CONFIG": 1 },
+    "params/ardupilot/ArduSub/4.5/sitl/Standard BlueROV2.params": { "FRAME_CONFIG": 1 }
+}
