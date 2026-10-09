@@ -87,21 +87,20 @@ def to_http_exception(endpoint: Any) -> Any:
     return wrapper
 
 
-def resolve_requested_path(requested_path: str | None) -> Path:
-    path = Path(requested_path or "/")
-    if not path.is_absolute():
-        path = (FILESYSTEM_ROOT / path).resolve()
-    try:
+def resolve_requested_path(requested_path: str | None, follow_symlinks: bool = True) -> Path:
+    path = FILESYSTEM_ROOT / (requested_path or "/")
+    if follow_symlinks:
         resolved = path.resolve()
-    except FileNotFoundError as exception:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Path not found.") from exception
+    else:
+        path = Path(os.path.normpath(path))
+        resolved = path.parent.resolve() / path.name
     try:
         resolved.relative_to(FILESYSTEM_ROOT)
     except ValueError as exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid path outside filesystem root."
         ) from exception
-    if not resolved.exists():
+    if not os.path.lexists(resolved):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Path not found.")
     return resolved
 
@@ -123,13 +122,7 @@ def is_protected_target(path: Path) -> bool:
         Path("/usr/libexec"),
         Path("/usr/sbin"),
     }
-    for root_path in protected_roots:
-        try:
-            path.relative_to(root_path)
-            return True
-        except ValueError:
-            continue
-    return False
+    return any(path.is_relative_to(root_path) or root_path.is_relative_to(path) for root_path in protected_roots)
 
 
 def build_tree(entries: Dict[Path, int], root_path: Path, min_size_bytes: int) -> DiskNode:
@@ -192,13 +185,7 @@ def parse_du_output(output: bytes) -> Dict[Path, int]:
         except ValueError:
             logger.debug(f"Skipping malformed size for line: {line}")
             continue
-        entry_path = Path(raw_path)
-        try:
-            resolved = entry_path.resolve()
-        except (FileNotFoundError, OSError, RuntimeError):
-            # Skip entries that cannot be resolved (broken/looping symlinks, missing files, loops)
-            continue
-        entries[resolved] = size
+        entries[Path(raw_path)] = size
     return entries
 
 
@@ -272,12 +259,12 @@ async def get_disk_usage(
 )
 @to_http_exception
 async def delete_path(target_path: str) -> None:
-    resolved_path = resolve_requested_path(target_path)
+    resolved_path = resolve_requested_path(target_path, follow_symlinks=False)
 
     if is_protected_target(resolved_path):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Refusing to delete protected path.")
 
-    if resolved_path.is_dir():
+    if resolved_path.is_dir() and not resolved_path.is_symlink():
         shutil.rmtree(resolved_path)
     else:
         resolved_path.unlink()
